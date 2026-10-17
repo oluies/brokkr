@@ -128,13 +128,39 @@ form mix at width 6: 27 Dense, 16 Monomial, 8 native
 Eight native ops — one per oracle and one per diffusion operator across four iterations, exactly as
 designed. Largest operator 64 KiB against 16 MiB before: a 256x reduction.
 
-### Timing caveat
+### Timings, re-measured
 
-**Wall-clock was not measurable.** The machine sat at load average 36 on 18 cores while measuring
-(an unrelated project's Python process at 922% CPU), and the *unchanged* unfused baseline swung
-between 336 ms and 2362 ms across runs. Fused Grover was consistently about 2x faster than unfused
-across widths 2-5, and fused brickwork won at widths 2-4, but neither figure is trustworthy until
-re-measured on a quiet machine. The model columns above are deterministic and unaffected.
+The first attempt was unusable: load average 36 on 18 cores (an unrelated project's Python process
+at 922% CPU) and the *unchanged* unfused baseline swinging between 336 ms and 2362 ms. Re-measured
+at load average 5.9, best of 7 after 3 warmups. The baseline came back at 344 ms, consistent with
+the 333/336 ms measured before the machine got busy, which confirms the outliers were interference.
+
+```
+# brickwork, 22 qubits
+width    ms   gate/s  vs unfused
+ none  344.2     950  -
+    2  287.4    1138  1.20x faster
+    3  260.2    1257  1.32x faster   <- best
+    4  263.9    1239  1.30x faster
+    5  365.8     894  1.06x slower
+    6  544.5     601  1.58x slower
+
+# Grover, 14 qubits, 4 iterations
+ none   22.9   11081  -
+    2   12.0   21110  1.91x faster
+    3    9.4   26939  2.44x faster
+    4    8.2   31012  2.79x faster   <- best
+    5    8.8   28832  2.60x faster
+    6   12.8   19898  1.79x faster
+```
+
+**This corrects the earlier conclusion.** "Fusion loses on a CPU at every width" was true of the
+dense-only pass and is false in general. Form-aware fusion wins at widths 2-4 on both workloads and
+only loses past width 5, where the added arithmetic finally outweighs the traffic saved.
+
+Grover — the workload the dense pass handled *worst*, at 3-9x slower — gains the most, at 2.8x.
+Not a coincidence: it has the highest proportion of cheap operators, so it had the most to gain from
+not densifying them.
 
 ### Architectural consequence
 

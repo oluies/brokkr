@@ -173,7 +173,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: sparsity-aware fusion landed, no RTL yet ·
+  <p class="meta">17 October 2026 · status: form-aware fusion landed and measured, no RTL yet ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -183,12 +183,16 @@
   kernel of state-vector simulation is structurally identical to what a tensor engine does: a
   strided gather, a small dense complex multiply-accumulate, a scatter. Gate fusion turns it into a
   genuine GEMM.</p>
-  <p>What fusion does <em>not</em> do is make the work smaller. Measured on an M5 Pro, fusing to
-  six-qubit blocks cuts memory traffic to <span class="f">0.2×</span> but raises the flop count to
-  <span class="f">5.9×</span>, and the fused path is <span class="f">3.2×</span> <em>slower</em> than
-  the unfused one. Fusion is an exchange rate between bandwidth and arithmetic. On a CPU the trade is
-  bad. On a wide MAC array with a banked scratchpad it is good — and that, precisely, is the case
-  for building the engine.</p>
+  <p>What fusion does <em>not</em> do is make the work smaller. It is an <strong>exchange rate
+  between bandwidth and arithmetic</strong>, and the rate depends entirely on how the operators are
+  stored. A dense-only pass trades badly: six-qubit blocks cut traffic to <span class="f">0.2×</span>
+  but raise flops to <span class="f">5.9×</span>, and lose to the specialised 2×2 kernel at every
+  width. Storing each operator in the tightest of three forms changes the rate enough to win on a CPU
+  outright — <span class="f">1.3×</span> on a brickwork circuit and <span class="f">2.8×</span> on
+  Grover.</p>
+  <p>That is the useful result, and it is not the one expected. The engine's job is not to run a
+  faster dense kernel; it is to serve a <strong>mix</strong> of three datapaths in which the dense one
+  is the minority.</p>
 </div>
 
 <h2><span class="num">01</span>What CUTE actually is</h2>
@@ -320,9 +324,11 @@ brickwork circuit — 22 qubits, six layers of H and RZ with alternating CNOT ru
   multiplies flops by <span class="mono">8·2<sup>k</sup> / 14k</span> — <span class="f">6.1×</span>
   at <span class="mono">k = 6</span>, which is what the measured <span class="f">5.9×</span>
   confirms.</p>
-  <p>On a CPU that trade is a loss at every width, and the table shows it: the specialised 2×2 kernel
-  wins outright. The engine only pays off if its flop-to-byte balance exceeds the exchange rate,
-  which is the one quantitative criterion the whole project rests on.</p>
+  <p>With every operator stored densely, that trade is a loss at every width, and the table shows it:
+  the specialised 2×2 kernel wins outright. The engine only pays off if its flop-to-byte balance
+  exceeds the exchange rate — which remains the one quantitative criterion the project rests on, but
+  the rate itself turns out to be a design variable rather than a constant. The next two sections are
+  about moving it.</p>
 </div>
 
 <p>Two caveats on these numbers, both of which make the hardware case <em>better</em> rather than
@@ -414,10 +420,41 @@ all-qubit controlled gate, even a cheap one, is the pass making work for itself.
   ops, one per oracle and diffusion operator; largest operator <strong>64 KiB against 16 MiB</strong>,
   a 256× reduction; traffic at <span class="f">0.3×</span> for only <span class="f">1.8×</span> the
   flops.</p>
-  <p>Wall-clock is deliberately not quoted here. The machine was at load average 36 while measuring
-  and the unfused baseline swung between 336 ms and 2362 ms. Grover was consistently around twice as
-  fast fused across widths 2–5, but that needs re-measuring on a quiet machine before it belongs on
-  this page.</p>
+  <p><strong>And on wall-clock it now wins.</strong> Re-measured on a quiet machine, best of seven
+  after three warmups:</p>
+</div>
+
+<div class="tablewrap">
+<table>
+  <caption>Apple M5 Pro, 18 cores, JDK 27. The dense-only figures from section 04 are the
+  <em>same circuit</em>, so the two are directly comparable.</caption>
+  <thead><tr>
+    <th>workload</th><th>width</th><th>flops</th><th>traffic</th><th>ms</th><th>gate/s</th>
+    <th class="note">vs unfused</th>
+  </tr></thead>
+  <tbody>
+    <tr class="hi"><td>brickwork, 22q</td><td>none</td><td>1.0×</td><td>1.0×</td><td>344.2</td><td>950</td><td class="note">—</td></tr>
+    <tr><td></td><td>2</td><td>0.8×</td><td>0.6×</td><td>287.4</td><td>1 138</td><td class="note">1.20× faster</td></tr>
+    <tr class="hi"><td></td><td>3</td><td>1.0×</td><td>0.5×</td><td>260.2</td><td>1 257</td><td class="note"><strong>1.32× faster</strong></td></tr>
+    <tr><td></td><td>4</td><td>1.4×</td><td>0.3×</td><td>263.9</td><td>1 239</td><td class="note">1.30× faster</td></tr>
+    <tr><td></td><td>6</td><td>3.8×</td><td>0.2×</td><td>544.5</td><td>601</td><td class="note">1.58× slower</td></tr>
+    <tr class="hi"><td>Grover, 14q</td><td>none</td><td>1.0×</td><td>1.0×</td><td>22.9</td><td>11 081</td><td class="note">—</td></tr>
+    <tr><td></td><td>3</td><td>1.3×</td><td>0.4×</td><td>9.4</td><td>26 939</td><td class="note">2.44× faster</td></tr>
+    <tr class="hi"><td></td><td>4</td><td>1.8×</td><td>0.3×</td><td>8.2</td><td>31 012</td><td class="note"><strong>2.79× faster</strong></td></tr>
+    <tr><td></td><td>6</td><td>4.8×</td><td>0.2×</td><td>12.8</td><td>19 898</td><td class="note">1.79× faster</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="verdict">
+  <span class="label cool">The corrected conclusion</span>
+  <p>The earlier statement on this page — that fusion loses on a CPU at every width — was true of a
+  dense-only pass and is <strong>false in general</strong>. Form-aware fusion wins at widths 2 to 4
+  on both workloads, peaking at 1.3× and 2.8×, and only becomes a loss past width 5 where the added
+  arithmetic finally outweighs the traffic saved.</p>
+  <p>Note that Grover, the workload the dense pass handled <em>worst</em>, is the one that gains
+  most. That is not a coincidence: it is the workload with the highest proportion of cheap operators,
+  so it had the most to gain from not densifying them.</p>
 </div>
 
 <p>The architectural consequence is the important part. The engine needs <strong>three paths, not
