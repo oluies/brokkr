@@ -1,0 +1,10 @@
+out/
+target/
+.bsp/
+.bloop/
+.metals/
+.idea/
+*.sv
+*.fir
+*.json.gz
+build/

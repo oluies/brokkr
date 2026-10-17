@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brokkr</title>
+<meta name="description" content="A design assessment: can a CUTE-style Chisel tensor engine accelerate quantum simulation, and what the gate-fusion measurements say about it.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf8;
+    --panel: #ffffff;
+    --panel-2: #f3f1ed;
+    --ink: #1c1b19;
+    --ink-2: #4e4b46;
+    --ink-3: #7a756d;
+    --rule: #e2ded7;
+    --accent: #8a4b2a;
+    --accent-2: #2f6b63;
+    --warn: #8a2a2a;
+    --code-bg: #f4f2ee;
+    --shadow: 0 1px 2px rgba(28,27,25,.05), 0 8px 24px rgba(28,27,25,.05);
+    --measure: 43rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+    --bg: #141413;
+    --panel: #1c1c1a;
+    --panel-2: #232320;
+    --ink: #eceae6;
+    --ink-2: #b8b4ac;
+    --ink-3: #8b867d;
+    --rule: #302f2b;
+    --accent: #e0a07a;
+    --accent-2: #7fc4b8;
+    --warn: #e08a8a;
+    --code-bg: #201f1d;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141413;
+    --panel: #1c1c1a;
+    --panel-2: #232320;
+    --ink: #eceae6;
+    --ink-2: #b8b4ac;
+    --ink-3: #8b867d;
+    --rule: #302f2b;
+    --accent: #e0a07a;
+    --accent-2: #7fc4b8;
+    --warn: #e08a8a;
+    --code-bg: #201f1d;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 17px/1.65 ui-serif, Charter, "Iowan Old Style", Georgia, "Times New Roman", serif;
+    font-feature-settings: "kern" 1;
+  }
+  .wrap { max-width: var(--measure); margin: 0 auto; padding: 0 16px 6rem; }
+  .wide { max-width: 60rem; margin: 0 auto; padding: 0 16px; }
+
+  header { border-bottom: 1px solid var(--rule); margin-bottom: 2.5rem; padding: 4rem 0 2rem; }
+  h1 {
+    font-size: clamp(2.1rem, 7vw, 3.1rem);
+    line-height: 1.08; margin: 0 0 .6rem; letter-spacing: -.02em; font-weight: 600;
+  }
+  .sub { color: var(--ink-2); font-size: 1.12rem; margin: 0 0 1.4rem; }
+  .meta {
+    font: 500 .78rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em;
+  }
+  .meta a { color: var(--ink-3); }
+
+  h2 {
+    font-size: 1.5rem; line-height: 1.2; margin: 3.2rem 0 .3rem;
+    letter-spacing: -.01em; font-weight: 600;
+  }
+  h2 .num {
+    display: block;
+    font: 500 .74rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--accent); letter-spacing: .12em; margin-bottom: .7rem; text-transform: uppercase;
+  }
+  h3 { font-size: 1.06rem; margin: 2rem 0 .2rem; font-weight: 600; }
+  p { margin: .9rem 0; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  strong { font-weight: 600; }
+  ul, ol { padding-left: 1.3rem; }
+  li { margin: .45rem 0; }
+  code, pre, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .88em;
+  }
+  code { background: var(--code-bg); padding: .1em .35em; border-radius: 3px; }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 1rem 1.1rem; overflow-x: auto; font-size: .82rem; line-height: 1.6; margin: 1.2rem 0;
+  }
+  pre code { background: none; padding: 0; }
+
+  .verdict {
+    background: var(--panel); border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 1.3rem 1.4rem; margin: 2rem 0; box-shadow: var(--shadow);
+  }
+  .verdict p:first-child { margin-top: 0; }
+  .verdict p:last-child { margin-bottom: 0; }
+  .label {
+    font: 600 .72rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--accent); display: block;
+    margin-bottom: .6rem;
+  }
+  .label.cool { color: var(--accent-2); }
+  .label.hot { color: var(--warn); }
+
+  .tablewrap { overflow-x: auto; margin: 1.4rem 0; -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; min-width: 30rem; }
+  table.narrow { min-width: 0; }
+  th, td {
+    text-align: right; padding: .5rem .7rem; border-bottom: 1px solid var(--rule);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem;
+    white-space: nowrap;
+  }
+  th {
+    font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em;
+    font-size: .7rem; border-bottom: 1px solid var(--ink-3);
+  }
+  th:first-child, td:first-child { text-align: left; }
+  td.note, th.note { font-family: inherit; font-size: .84rem; white-space: normal; text-align: left; }
+  tr.hi td { background: var(--panel-2); font-weight: 600; }
+  caption {
+    caption-side: bottom; text-align: left; color: var(--ink-3); font-size: .82rem;
+    padding-top: .7rem; font-family: inherit;
+  }
+
+  figure { margin: 2rem 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { color: var(--ink-3); font-size: .84rem; margin-top: .8rem; }
+
+  .diagram .box { fill: var(--panel); stroke: var(--rule); }
+  .diagram .box-2 { fill: var(--panel-2); stroke: var(--rule); }
+  .diagram .box-hi { fill: none; stroke: var(--accent); stroke-dasharray: 4 3; }
+  .diagram text { fill: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .diagram .t { font-size: 13px; font-weight: 600; }
+  .diagram .s { font-size: 10.5px; fill: var(--ink-3); }
+  .diagram .cap { font-size: 10px; fill: var(--accent); letter-spacing: .08em; font-weight: 600; }
+  .diagram .arrow { stroke: var(--ink-3); stroke-width: 1.4; fill: none; }
+  .diagram .arrow-2 { stroke: var(--accent-2); stroke-width: 1.4; fill: none; stroke-dasharray: 3 3; }
+
+  .stage {
+    border-left: 2px solid var(--rule); padding: .1rem 0 .1rem 1.3rem; margin: 1.8rem 0;
+  }
+  .stage h3 { margin-top: 0; }
+  .stage .when {
+    font: 500 .74rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em;
+  }
+  .stage.now { border-left-color: var(--accent); }
+
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 3.5rem 0 0; }
+  footer { color: var(--ink-3); font-size: .86rem; padding: 1.5rem 0 0; }
+  .f { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <h1>Brokkr</h1>
+  <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
+  assessment, with the gate-fusion measurements that decide it.</p>
+  <p class="meta">17 October 2026 · status: fusion pass landed, no RTL yet ·
+  <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
+</header>
+
+<div class="verdict">
+  <span class="label">The short version</span>
+  <p><strong>Yes, the shape transfers — but not for the reason it first appears to.</strong> The hot
+  kernel of state-vector simulation is structurally identical to what a tensor engine does: a
+  strided gather, a small dense complex multiply-accumulate, a scatter. Gate fusion turns it into a
+  genuine GEMM.</p>
+  <p>What fusion does <em>not</em> do is make the work smaller. Measured on an M5 Pro, fusing to
+  six-qubit blocks cuts memory traffic to <span class="f">0.2×</span> but raises the flop count to
+  <span class="f">5.9×</span>, and the fused path is <span class="f">3.2×</span> <em>slower</em> than
+  the unfused one. Fusion is an exchange rate between bandwidth and arithmetic. On a CPU the trade is
+  bad. On a wide MAC array with a banked scratchpad it is good — and that, precisely, is the case
+  for building the engine.</p>
+</div>
+
+<h2><span class="num">01</span>What CUTE actually is</h2>
+
+<p>Worth pinning down first, because it is not a simulator and its README is one line. From the
+repository itself:</p>
+
+<ul>
+  <li><a href="https://github.com/OpenXiangShan/CUTE">OpenXiangShan/CUTE</a> is
+  <em>“a scalable CPU-centric and ultra-utilized tensor engine for convolutions”</em>
+  (<a href="https://www.sciencedirect.com/science/article/pii/S1383762124000432">JSA 2024</a>), now
+  at v2.</li>
+  <li><strong>Chisel 6.7.0 on Scala 2.13.15</strong>, dual-built with Mill and sbt, with
+  <code>-Ytasty-reader</code> enabled.</li>
+  <li>Submodules: <code>rocket-chip</code> (OpenXiangShan fork), <code>Utility</code>,
+  <code>XSAICache</code> (high-bandwidth L2), <code>CUTEFPE</code> (a C++ floating-point-engine
+  model).</li>
+  <li><code>src/main/scala</code> is a textbook accelerator: <code>ABMatrixReg</code> and
+  <code>CMatrixReg</code> operand register files; <code>A/B/C DataController</code>,
+  <code>MemoryLoader</code> and <code>MultiChannelsAML</code> on the memory side;
+  <code>MatrixTE</code> and <code>ReducePE</code> for compute; <code>OmegaNetworkRouter</code> and
+  <code>TransposeLoadEngine</code> as the shuffle fabric; plus <code>LocalMMU</code>,
+  <code>TaskController</code> and <code>CuteDifftest</code>.</li>
+  <li>Flow: <code>mill CUTE.test.runMain cute.TestTop --target systemverilog --split-verilog</code>,
+  then <code>vlsi_mem_gen</code> for SRAM macros. Verification is per-unit <code>chiseltest</code>
+  specs plus end-to-end difftest against a software golden model.</li>
+</ul>
+
+<p>So “similar to CUTE” means a Chisel accelerator, CPU-coupled through rocket-chip, with a
+banked-SRAM memory subsystem, verified unit-by-unit and then differentially against a reference
+implementation.</p>
+
+<h2><span class="num">02</span>The kernel is already the right shape</h2>
+
+<p>Here is the inner loop of
+<a href="https://github.com/oluies/scotty/blob/pctc/src/main/scala/scotty/simulator/QuantumSimulator.scala">Scotty</a>,
+applying a one-qubit gate:</p>
+
+<pre><code>iterator.foreach: i =&gt;
+  val clearedBit = nthCleared(i, index)        // strided address generation
+  ...                                          // gather an amplitude pair
+  Complex.sum(Complex.product(...), Complex.product(...))   // 2x2 complex matvec
+  state(oneIndex) = ...                        // scatter back</code></pre>
+
+<p>Gather at a stride, multiply by a small dense complex matrix, scatter. That is what
+<code>MatrixTE</code> plus <code>TransposeLoadEngine</code> plus <code>OmegaNetworkRouter</code>
+do. And <code>nthCleared</code> inserts a zero bit into the amplitude index — qubit addressing is
+pure bit permutation, which is exactly what an Omega or banyan network is for. The shuffle fabric
+CUTE needs for convolution is a <em>better</em> fit for quantum state-vector addressing than it is
+for its own workload.</p>
+
+<h2><span class="num">03</span>Why the naive port starves</h2>
+
+<p>“Ultra-utilized” means CUTE is built for a workload with high arithmetic intensity. Convolution
+reuses each loaded operand many times, so a wide multiplier array stays fed. One-qubit gates have
+almost no reuse at all.</p>
+
+<p>Per amplitude pair: two complex multiplies and one complex add, counting a complex multiply as
+six flops and a complex add as two — 28 flops, against 32 bytes read and 32 written in double
+precision. That is <strong>0.44 flop/byte</strong>, roughly twenty to a hundred times below what a
+systolic array needs. Drop <code>MatrixTE</code> in unchanged and you have built a tensor engine
+that runs at a few percent utilisation.</p>
+
+<p>Fusing a run of gates that touch the same <span class="mono">k</span> qubits into one dense
+<span class="mono">2<sup>k</sup> × 2<sup>k</sup></span> operator fixes the ratio, because the
+operator is loaded once and reused across every one of the <span class="mono">2<sup>n−k</sup></span>
+slices of the state. Counting the operator load, the modelled intensity is:</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>Modelled intensity and operator footprint by fusion width, double-precision complex
+  amplitudes. Measured by <code>FusionCost</code> in Scotty.</caption>
+  <thead><tr>
+    <th>width k</th><th>dim 2^k</th><th>flop/byte</th><th>operator</th><th class="note">feasibility</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>1</td><td>2</td><td>0.44</td><td>64 B</td><td class="note">starves any array</td></tr>
+    <tr><td>2</td><td>4</td><td>0.94</td><td>256 B</td><td class="note">—</td></tr>
+    <tr><td>3</td><td>8</td><td>1.57</td><td>1 KiB</td><td class="note">—</td></tr>
+    <tr><td>4</td><td>16</td><td>3.91</td><td>4 KiB</td><td class="note">register-file scale</td></tr>
+    <tr class="hi"><td>5</td><td>32</td><td>6.73</td><td>16 KiB</td><td class="note">software sweet spot</td></tr>
+    <tr class="hi"><td>6</td><td>64</td><td>15.9</td><td>64 KiB</td><td class="note">GEMM territory; fits a scratchpad</td></tr>
+    <tr><td>8</td><td>256</td><td>~64</td><td>1 MiB</td><td class="note">upper bound on on-chip storage</td></tr>
+    <tr><td>10</td><td>1024</td><td>~256</td><td>16 MiB</td><td class="note">build cost dominates; impractical</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Two things bound <span class="mono">k</span> from above, and neither is the intensity. The fused
+operator has to <strong>fit in whatever register file or scratchpad feeds the multipliers</strong>
+— <span class="mono">4<sup>k</sup></span> complex entries, so 1 MiB of operand SRAM caps
+<span class="mono">k</span> at 8. And <strong>building</strong> the operator costs a dense
+<span class="mono">2<sup>k</sup></span>-cubed matrix product per gate fused, so it only amortises
+when <span class="mono">n − k</span> is large. Both point at the same design window:
+<span class="mono">k = 6</span> to <span class="mono">8</span>, intensity 16 to 64 flop/byte. That
+is the right range for a systolic array, and it is reachable.</p>
+
+<h2><span class="num">04</span>What the measurements actually say</h2>
+
+<p>The fusion pass now exists in Scotty, verified amplitude-by-amplitude against the unfused
+simulator across the whole gate set and randomised circuits. Running it on a nearest-neighbour
+brickwork circuit — 22 qubits, six layers of H and RZ with alternating CNOT rungs, 327 gates, a
+64 MiB state:</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Apple M5 Pro, 18 cores, JDK 27, Scala 3.9. Best of three runs after two warmups.
+  Reproduce with <code>sbt 'Test/runMain scotty.simulator.fusion.FusionBench 22'</code>.</caption>
+  <thead><tr>
+    <th>width</th><th>blocks</th><th>flop/byte</th><th>flops</th><th>traffic</th>
+    <th>operator</th><th>ms</th><th>gate/s</th>
+  </tr></thead>
+  <tbody>
+    <tr class="hi"><td>none</td><td>327</td><td>0.53</td><td>1.0×</td><td>1.0×</td><td>—</td><td>336</td><td>973</td></tr>
+    <tr><td>2</td><td>195</td><td>0.94</td><td>1.0×</td><td>0.6×</td><td>256 B</td><td>459</td><td>712</td></tr>
+    <tr><td>3</td><td>148</td><td>1.57</td><td>1.3×</td><td>0.5×</td><td>1 KiB</td><td>507</td><td>645</td></tr>
+    <tr><td>4</td><td>98</td><td>3.91</td><td>2.2×</td><td>0.3×</td><td>4 KiB</td><td>442</td><td>740</td></tr>
+    <tr><td>5</td><td>83</td><td>6.73</td><td>3.2×</td><td>0.3×</td><td>16 KiB</td><td>656</td><td>499</td></tr>
+    <tr><td>6</td><td>65</td><td>15.9</td><td>5.9×</td><td>0.2×</td><td>64 KiB</td><td>1088</td><td>300</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="verdict">
+  <span class="label hot">The finding</span>
+  <p>Fusion does not reduce the work. It <strong>converts memory traffic into arithmetic</strong>, at
+  a fixed and knowable exchange rate. Fusing <span class="mono">k</span> one-qubit gates on
+  <span class="mono">k</span> distinct qubits divides traffic by <span class="mono">k</span> and
+  multiplies flops by <span class="mono">8·2<sup>k</sup> / 14k</span> — <span class="f">6.1×</span>
+  at <span class="mono">k = 6</span>, which is what the measured <span class="f">5.9×</span>
+  confirms.</p>
+  <p>On a CPU that trade is a loss at every width, and the table shows it: the specialised 2×2 kernel
+  wins outright. The engine only pays off if its flop-to-byte balance exceeds the exchange rate,
+  which is the one quantitative criterion the whole project rests on.</p>
+</div>
+
+<p>Two caveats on these numbers, both of which make the hardware case <em>better</em> rather than
+worse. The greedy pass densifies operators that did not need densifying: <code>RZ</code>,
+<code>PHASE</code>, <code>CZ</code> and <code>CPHASE</code> are diagonal, costing one complex
+multiply per amplitude unfused and a full dense block fused. A sparsity-aware pass that keeps
+diagonal blocks diagonal would cut the flop inflation substantially. And the fused kernel is a
+generic <span class="mono">d × d</span> loop against a hand-specialised 2×2 one; some of the gap is
+tuning, not physics.</p>
+
+<h2><span class="num">05</span>The capacity ceiling</h2>
+
+<p>This part is unforgiving, and no amount of silicon fixes it. A single-precision complex amplitude
+is 8 bytes, so the state is <span class="mono">2<sup>n</sup> × 8</span> bytes:</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <thead><tr><th>where the state lives</th><th>capacity</th><th>qubits</th></tr></thead>
+  <tbody>
+    <tr><td>on-chip SRAM</td><td>a few MiB</td><td>18–20</td></tr>
+    <tr><td>large FPGA (BRAM + URAM)</td><td>~50 MB</td><td>22</td></tr>
+    <tr><td>HBM-attached</td><td>32 GB</td><td>32</td></tr>
+    <tr class="hi"><td>a laptop with 64 GB</td><td>64 GB</td><td>32</td></tr>
+    <tr class="hi"><td>an 80 GB GPU</td><td>80 GB</td><td>33</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>A hardware state-vector simulator will not beat commodity hardware on qubit count.</strong>
+That is a memory-capacity problem. Any pitch that leads with qubit count is dead on arrival.</p>
+
+<h2><span class="num">06</span>Where it could actually win</h2>
+
+<ol>
+  <li><strong>Gate latency and energy per gate at small n.</strong> Not throughput on one large
+  circuit — round-trip time in a tight CPU-to-accelerator loop. That is the regime of variational
+  algorithms and of parameter sweeps like
+  <a href="https://github.com/oluies/pctc">pctc</a>’s <code>CoordinateSearch</code> and
+  <code>Capacities</code>, which re-evaluate a small problem thousands of times. Serial, small-data,
+  latency-bound: a poor GPU workload and a good tightly-coupled-accelerator workload.</li>
+  <li><strong>Density-matrix and noisy simulation</strong>, which is where this codebase already
+  lives. A density matrix over <span class="mono">n</span> qubits has
+  <span class="mono">4<sup>n</sup></span> entries, so the qubit count halves — 10 to 12 qubits fits
+  entirely on chip — and applying a Kraus channel is a dense superoperator product with genuinely
+  good arithmetic intensity, no fusion trickery required. This is the strongest fit between the
+  existing work and a CUTE-shaped engine, and a less crowded field than state-vector simulation.</li>
+  <li><strong>A publishable hardware/software co-design artifact.</strong> CUTE itself is a journal
+  paper with a repository attached. That is the genre, and it is a legitimate goal.</li>
+</ol>
+
+<p>One thing stays in software: <code>pctc</code>’s <code>Eigen</code>, <code>Cholesky</code> and
+<code>NullSpace</code> on 2- to 24-dimensional matrices. Iterative, branchy, ill-conditioned, tiny.
+Bad silicon, fine Scala.</p>
+
+<h2><span class="num">07</span>Proposed architecture</h2>
+
+<figure class="diagram">
+<svg viewBox="0 0 880 450" role="img" aria-labelledby="dtitle">
+  <title id="dtitle">Block diagram of the proposed fused-block quantum simulation engine</title>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--ink-3)"/>
+    </marker>
+    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent-2)"/>
+    </marker>
+  </defs>
+
+  <rect class="box-hi" x="196" y="54" width="470" height="300" rx="10"/>
+  <text class="cap" x="206" y="46">BROKKR ENGINE</text>
+
+  <!-- CPU -->
+  <rect class="box" x="8" y="80" width="170" height="150" rx="8" stroke-width="1"/>
+  <text class="t" x="24" y="106">CPU</text>
+  <text class="s" x="24" y="124">rocket-chip / XiangShan</text>
+  <text class="s" x="24" y="152">· gate-fusion pass</text>
+  <text class="s" x="24" y="170">· block scheduling</text>
+  <text class="s" x="24" y="188">· operator construction</text>
+  <text class="s" x="24" y="206">· measurement, classical post</text>
+
+  <!-- TaskController -->
+  <rect class="box-2" x="216" y="80" width="190" height="62" rx="6" stroke-width="1"/>
+  <text class="t" x="230" y="104">TaskController</text>
+  <text class="s" x="230" y="122">block descriptor queue</text>
+
+  <!-- AddressGen -->
+  <rect class="box-2" x="216" y="166" width="190" height="62" rx="6" stroke-width="1"/>
+  <text class="t" x="230" y="190">AddressGen</text>
+  <text class="s" x="230" y="208">base + 2^k strides</text>
+
+  <!-- Shuffle -->
+  <rect class="box-2" x="216" y="252" width="190" height="80" rx="6" stroke-width="1"/>
+  <text class="t" x="230" y="276">OmegaNetwork</text>
+  <text class="s" x="230" y="294">bit-permutation fabric;</text>
+  <text class="s" x="230" y="310">makes qubit stride</text>
+  <text class="s" x="230" y="326">bank-conflict free</text>
+
+  <!-- OperatorReg -->
+  <rect class="box-2" x="440" y="80" width="206" height="80" rx="6" stroke-width="1"/>
+  <text class="t" x="454" y="104">OperatorReg</text>
+  <text class="s" x="454" y="122">fused 2^k x 2^k complex,</text>
+  <text class="s" x="454" y="138">k = 6..8, 64 KiB..1 MiB,</text>
+  <text class="s" x="454" y="154">loaded once per block</text>
+
+  <!-- MAC array -->
+  <rect class="box-2" x="440" y="184" width="206" height="148" rx="6" stroke-width="1"/>
+  <text class="t" x="454" y="208">ComplexMAC array</text>
+  <text class="s" x="454" y="226">2^k-wide complex matvec</text>
+  <text class="s" x="454" y="244">per slice; 4 real mul +</text>
+  <text class="s" x="454" y="262">2 add per complex mul</text>
+  <text class="s" x="454" y="288">reuse factor = 2^k</text>
+  <text class="s" x="454" y="306">intensity = 2^k / 4</text>
+  <text class="s" x="454" y="324">(CUTEFPE-derived FPUs)</text>
+
+  <!-- Memory -->
+  <rect class="box" x="684" y="80" width="188" height="150" rx="8" stroke-width="1"/>
+  <text class="t" x="698" y="106">Amplitude store</text>
+  <text class="s" x="698" y="124">banked by low qubit index</text>
+  <text class="s" x="698" y="152">on-chip: n &lt;= 20</text>
+  <text class="s" x="698" y="170">XSAICache L2: n &lt;= 22</text>
+  <text class="s" x="698" y="188">HBM / DDR: n &lt;= 32</text>
+  <text class="s" x="698" y="214">2^n x 16 B, fp64 complex</text>
+
+  <!-- Difftest -->
+  <rect class="box" x="684" y="262" width="188" height="92" rx="8" stroke-width="1"/>
+  <text class="t" x="698" y="288">Difftest tap</text>
+  <text class="s" x="698" y="306">per-block state compare</text>
+  <text class="s" x="698" y="324">against Scotty as the</text>
+  <text class="s" x="698" y="340">golden model</text>
+
+  <!-- arrows -->
+  <path class="arrow" d="M 178 112 L 210 112" marker-end="url(#ah)"/>
+  <text class="s" x="180" y="104">descriptors</text>
+  <path class="arrow" d="M 178 196 L 210 196" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 311 142 L 311 160" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 311 228 L 311 246" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 406 290 L 440 290" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 440 274 L 406 274" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 543 160 L 543 178" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 646 290 C 670 290 672 160 684 150" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 684 130 C 666 120 664 270 646 276" marker-end="url(#ah)"/>
+  <text class="s" x="556" y="352">gather / scatter</text>
+  <path class="arrow-2" d="M 160 230 C 160 400 600 400 778 356" marker-end="url(#ah2)"/>
+  <text class="s" x="300" y="398" fill="var(--accent-2)">Scotty golden model (Scala 3, difftest reference)</text>
+</svg>
+<figcaption>Module names deliberately parallel CUTE’s, because the intent is to reuse its structure:
+<code>TaskController</code>, the Omega shuffle fabric, the operand register file feeding a MAC
+array, <code>XSAICache</code> on the memory side, and difftest against a software model.</figcaption>
+</figure>
+
+<div class="tablewrap">
+<table>
+  <caption>What maps across, and what has to be new.</caption>
+  <thead><tr><th>CUTE</th><th>Brokkr</th><th class="note">change</th></tr></thead>
+  <tbody>
+    <tr><td>TaskController</td><td>TaskController</td><td class="note">reusable; descriptors become fused-block records</td></tr>
+    <tr><td>ABMatrixReg</td><td>OperatorReg</td><td class="note">reusable shape; complex rather than real entries</td></tr>
+    <tr><td>MatrixTE / ReducePE</td><td>ComplexMAC</td><td class="note">real MACs become complex; CUTEFPE is the FPU source</td></tr>
+    <tr><td>OmegaNetworkRouter</td><td>same</td><td class="note">the best fit of the lot — qubit stride <em>is</em> a bit permutation</td></tr>
+    <tr><td>A/B/C MemoryLoader</td><td>AmplitudeLoader</td><td class="note">new address generator: <code>nthCleared</code>, not convolution tiling</td></tr>
+    <tr><td>XSAICache</td><td>same</td><td class="note">reusable as-is for n beyond on-chip</td></tr>
+    <tr><td>CuteDifftest / CUTEFPE</td><td>Scotty</td><td class="note">golden model already exists and is tested</td></tr>
+    <tr><td>—</td><td>FusionPass</td><td class="note">new, and it runs on the CPU — see stage 1</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2><span class="num">08</span>Roadmap</h2>
+
+<div class="stage now">
+  <p class="when">Stage 1 · in progress · Scala only</p>
+  <h3>Make the software case first</h3>
+  <p>No Chisel until the numbers justify it. The fusion pass, its cost model and the benchmark above
+  are the deliverable, and they have already changed the design: the engine’s job is to be
+  bandwidth-cheap and flop-rich, not to run a faster simulator.</p>
+  <ul>
+    <li><strong>Done:</strong> greedy fusion pass over Scotty’s circuit IR; dense lowering of the
+    whole gate set, mirroring the simulator’s own decompositions; <code>FusionCost</code> roofline
+    model; equivalence tests against the unfused simulator including randomised circuits;
+    <code>FusionBench</code>.</li>
+    <li><strong>Next:</strong> sparsity-aware fusion — keep diagonal and permutation blocks in their
+    cheap form instead of densifying them. This is the single largest remaining lever on the flop
+    inflation.</li>
+    <li>Commutation-aware and look-ahead placement policies, measured against greedy.</li>
+    <li>Grover and Shor as standard workloads, in Scala and Scala.js, doubling as the difftest
+    vectors for every later stage.</li>
+  </ul>
+</div>
+
+<div class="stage">
+  <p class="when">Stage 2 · Scala, no RTL</p>
+  <h3>Cycle-approximate model</h3>
+  <p>A performance model of banked scratchpad plus Omega shuffle plus MAC array, driven by real
+  fused-block descriptors. This is where the key uncertainty gets resolved:
+  <strong>does the Omega network actually resolve the qubit-stride bank conflicts for every target
+  index</strong>, or only for some? If it does not, the whole architectural argument weakens and
+  stage 3 should not start.</p>
+  <ul>
+    <li>Bank-conflict analysis across all target-qubit positions and fusion widths.</li>
+    <li>Sweep the flop-to-byte balance to find where the engine beats the exchange rate.</li>
+    <li>Pick the design point: <span class="mono">k</span>, bank count, MAC width, precision.</li>
+  </ul>
+</div>
+
+<div class="stage">
+  <p class="when">Stage 3 · Chisel · multi-month</p>
+  <h3>RTL</h3>
+  <p>A Scala 2.13 + Chisel 6.7 Mill project mirroring CUTE’s <code>build.sc</code>, with
+  <code>rocket-chip</code>, <code>Utility</code> and <code>XSAICache</code> as submodules.</p>
+  <ul>
+    <li><code>OperatorReg</code>, <code>AmplitudeLoader</code>, <code>AddressGen</code>,
+    <code>ComplexMAC</code>, <code>TaskController</code> — each with a chiseltest spec, as CUTE
+    does.</li>
+    <li><code>TestTop</code> generating SystemVerilog through
+    <code>--target systemverilog --split-verilog</code>.</li>
+    <li>Difftest against Scotty, per block, on the Grover and Shor vectors from stage 1.</li>
+    <li>Only then: FPGA bring-up, and a decision about the density-matrix variant.</li>
+  </ul>
+</div>
+
+<h2><span class="num">09</span>Verification strategy</h2>
+
+<p>This is the part the existing codebase makes cheap, and it is why Scotty is the right starting
+point rather than an incidental one.</p>
+
+<ul>
+  <li><strong>Scotty is the golden model.</strong> 3.7k lines of Scala 3, 172 passing tests,
+  amplitudes already in the interleaved <code>(re, im, re, im)</code> flat-array layout that
+  hardware wants.</li>
+  <li><strong>The fusion pass is checked against the simulator, not against a second reading of the
+  gate definitions.</strong> <code>FusedBlock.lower</code> deliberately mirrors
+  <code>QuantumSimulator.applyGate</code> case for case and reuses its composite decompositions, so
+  the lowering is the simulator’s semantics by construction.</li>
+  <li><strong>Bit conventions are pinned by test.</strong> Qubit 0 is the least significant bit of
+  the amplitude index; local bit <span class="mono">j</span> of a block operator is global qubit
+  <span class="mono">qubits(j)</span>. There is a characterisation test for this, because every dense
+  operator in the pass is transposed into the wrong basis if it ever flips.</li>
+  <li><strong>Algorithm-level vectors.</strong> Grover and Shor give end-to-end checks with
+  <em>known answers</em> — a marked amplitude that must approach 1, a period that must come back as
+  4 — rather than amplitude diffs alone. That is what makes them worth having as the difftest
+  payload.</li>
+  <li><strong>Scala 2.13 consuming Scala 3.</strong> CUTE already sets <code>-Ytasty-reader</code>,
+  which in principle lets Chisel code use Scotty’s jar directly. <em>Verify before relying on
+  it</em> — tasty-reader support is partial and Scotty is on 3.9 LTS. The fallback is a trace dumped
+  by Scotty and replayed by a C++ harness, which is how <code>CuteDifftest</code> and
+  <code>CUTEFPE</code> appear to work anyway.</li>
+</ul>
+
+<h2><span class="num">10</span>Open risks</h2>
+
+<ul>
+  <li><strong>The exchange rate may never close.</strong> If an achievable MAC array cannot beat
+  <span class="mono">8·2<sup>k</sup>/14k</span> flops per <span class="mono">k</span>× of bandwidth
+  saved, there is no engine worth building. Stage 2 exists to answer this before any RTL.</li>
+  <li><strong>Bank conflicts.</strong> The Omega network is the right <em>kind</em> of fabric, but
+  whether it resolves every stride without stalls is unproven here.</li>
+  <li><strong>Operator construction on the critical path.</strong> Fusion costs
+  <span class="mono">O(8<sup>k</sup>)</span> per gate on the CPU side. For a latency-bound loop —
+  the main motivation — that cost may eat the gain. Caching operators across sweeps with only the
+  parameters changed is the obvious mitigation and is untested.</li>
+  <li><strong>Precision.</strong> Everything here is fp64 complex. fp32 halves the traffic and
+  doubles the effective capacity, but the density-matrix layer was deliberately widened from
+  <code>Float</code> to <code>Double</code> in the Scala 3 port for accuracy reasons. Mixed
+  precision needs its own study.</li>
+  <li><strong>A latent inconsistency in Scotty.</strong> <code>registerToState</code> tensors qubit 0
+  in as the most significant factor, while <code>applyTargetGate</code> treats qubit 0 as the least
+  significant bit. For an all-zero or all-one register this is invisible, which is why it has
+  survived; for a custom register it is not. The fusion pass matches the simulator either way, so it
+  is unaffected, but it should be resolved before Scotty is used as a golden model for anything
+  outside it.</li>
+</ul>
+
+<hr>
+<footer>
+  <p>Part of <span class="mono">bifrost</span>, alongside
+  <a href="https://github.com/oluies/scotty">scotty</a> (the simulator and golden model) and
+  <a href="https://github.com/oluies/pctc">pctc</a> (noisy post-selected closed timelike curves,
+  the workload that started this). Apache-2.0.</p>
+  <p>No RTL exists yet, and this page will say so until it does.</p>
+</footer>
+</div>
+
+</body>
+</html>
