@@ -9,11 +9,12 @@ A design assessment, and eventually an implementation, of a
 
 ## Status
 
-One block of RTL exists. The engine does not. What is here:
+Two blocks of RTL exist. The engine does not. What is here:
 
 - the design assessment in `docs/`, published to GitHub Pages;
 - the measurement record in `notes/`;
-- `rtl/` — Chisel, starting with `AddressGen`;
+- `rtl/` — Chisel: `AddressGen` (slice address generation) and `DiagonalKernel` (the phase
+  datapath), each verified against Scotty;
 - `vectors/` — the Scala 3 generator that produces golden vectors from Scotty.
 
 The gate-fusion pass that motivated all of it lives in
@@ -23,8 +24,9 @@ because it is a simulator optimisation in its own right.
 ## Building the RTL
 
 ```bash
-./mill rtl.test                       # AddressGen against Scotty's vectors
-./mill rtl.runMain brokkr.Generate    # emit SystemVerilog via CIRCT
+./mill rtl.test                                      # both blocks, against Scotty's vectors
+./mill rtl.runMain brokkr.Generate AddressGen        # emit SystemVerilog via CIRCT
+./mill rtl.runMain brokkr.Generate DiagonalKernel
 ```
 
 No HDL toolchain is required to get this far: `chiseltest` interprets the design on the JVM, and

@@ -180,7 +180,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: form-aware fusion measured; first RTL block verified ·
+  <p class="meta">17 October 2026 · status: form-aware fusion measured; two RTL blocks verified ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -724,13 +724,22 @@ would leave most of its area idle on real circuits.</figcaption>
 <div class="stage now">
   <p class="when">Stage 3 · begun · one block standing</p>
   <h3>RTL</h3>
-  <p><strong>The first block exists and is verified.</strong> <code>AddressGen</code> — the
-  bit-insertion logic that turns a slice number into a base amplitude address — is written in Chisel,
-  checked against all 592 exhaustive vectors Scotty produces for six qubits and supports up to three
-  wide, and emits clean combinational SystemVerilog through CIRCT. It needed no HDL toolchain
-  installed: <code>chiseltest</code> interprets on the JVM and firtool is fetched as a dependency.
-  The two Scala versions meet through a generated vector file, for the reason given under
-  verification below.</p>
+  <p><strong>Two blocks exist and are verified</strong>, both against Scotty, neither needing an
+  HDL toolchain installed — <code>chiseltest</code> interprets on the JVM and firtool arrives as an
+  ordinary dependency. The two Scala versions meet through a generated vector file, for the reason
+  given under verification below.</p>
+  <ul>
+    <li><strong><code>AddressGen</code></strong> — the bit insertion that turns a slice number into a
+    base amplitude address. Combinational, one stage per supported qubit, checked against all 592
+    exhaustive vectors for six qubits and supports up to three wide.</li>
+    <li><strong><code>DiagonalKernel</code></strong> — the phase path: a <span class="mono">2^k</span>
+    phase table, one complex multiplier, one amplitude per cycle. The first block that is not
+    bit-exact, so it is checked twice: against an exact integer model of its own fixed-point
+    arithmetic, which admits no tolerance; and against Scotty's doubles, which is how the precision
+    number above was obtained. In hardware one complex multiplier is four real ones — against the
+    dense path's <span class="mono">2^k</span>-wide MAC array, that is the whole argument for keeping
+    the forms apart.</li>
+  </ul>
   <p>A Scala 2.13 + Chisel 6.7 Mill project mirroring CUTE’s <code>build.sc</code>, with
   <code>rocket-chip</code>, <code>Utility</code> and <code>XSAICache</code> as submodules.</p>
   <ul>
@@ -794,10 +803,13 @@ point rather than an incidental one.</p>
   <span class="mono">O(8<sup>k</sup>)</span> per gate on the CPU side. For a latency-bound loop —
   the main motivation — that cost may eat the gain. Caching operators across sweeps with only the
   parameters changed is the obvious mitigation and is untested.</li>
-  <li><strong>Precision.</strong> Everything here is fp64 complex. fp32 halves the traffic and
-  doubles the effective capacity, but the density-matrix layer was deliberately widened from
-  <code>Float</code> to <code>Double</code> in the Scala 3 port for accuracy reasons. Mixed
-  precision needs its own study.</li>
+  <li><strong>Precision — now with one data point.</strong> Everything in the simulator is fp64
+  complex. The first RTL to do arithmetic, the diagonal kernel, uses Q1.23 fixed point instead, and
+  the cost of that was measured rather than assumed: the worst deviation from Scotty over a fused
+  <code>RZ</code>/<code>CPHASE</code>/<code>T</code> block is <strong>1.94 × 10<sup>-7</sup></strong>,
+  about 1.6 quantisation steps. That is one block and one circuit, not a study — error accumulates
+  over a circuit's depth, and nothing here measures that yet. But fixed point is clearly not
+  disqualifying, which was the open question.</li>
   <li><strong>A latent inconsistency in Scotty.</strong> <code>registerToState</code> tensors qubit 0
   in as the most significant factor, while <code>applyTargetGate</code> treats qubit 0 as the least
   significant bit. For an all-zero or all-one register this is invisible, which is why it has
@@ -812,7 +824,7 @@ point rather than an incidental one.</p>
   <a href="https://github.com/oluies/scotty">scotty</a> (the simulator and golden model) and
   <a href="https://github.com/oluies/pctc">pctc</a> (noisy post-selected closed timelike curves,
   the workload that started this). Apache-2.0.</p>
-  <p>One block of RTL exists. The engine does not.</p>
+  <p>Two blocks of RTL exist. The engine does not.</p>
 </footer>
 </div>
 

@@ -12,12 +12,18 @@ import circt.stage.ChiselStage
   * Verilator or FPGA run would consume.
   */
 object Generate {
+  private val modules: Map[String, () => chisel3.RawModule] = Map(
+    "AddressGen" -> (() => new AddressGen(qubitCount = 6, maxWidth = 3)),
+    "DiagonalKernel" -> (() => new DiagonalKernel(qubitCount = 6, maxWidth = 3, dataWidth = 24))
+  )
+
   def main(args: Array[String]): Unit = {
-    val targetDir = args.headOption.getOrElse("build")
+    val name = args.headOption.getOrElse("AddressGen")
+    val build = modules.getOrElse(name, sys.error(s"no such module: $name, have ${modules.keys.mkString(", ")}"))
 
     println(
       ChiselStage.emitSystemVerilog(
-        new AddressGen(qubitCount = 6, maxWidth = 3),
+        build(),
         firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info")
       )
     )

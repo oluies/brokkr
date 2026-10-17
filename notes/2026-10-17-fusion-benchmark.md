@@ -167,3 +167,53 @@ not densifying them.
 The engine needs **three paths, not one**, in roughly a 2:2:3 diagonal:monomial:dense mix on the
 workloads measured so far. Sizing a MAC array for 100% of blocks would waste most of it. The block
 diagram in the assessment has not been redrawn for this yet.
+
+## Addendum 3: the first RTL, and a precision number
+
+Two Chisel blocks now exist, both verified against Scotty, neither requiring an HDL toolchain to be
+installed — chiseltest interprets on the JVM and firtool arrives as an ordinary Maven dependency.
+
+### AddressGen
+
+The bit insertion that turns a slice number into a base amplitude address. Combinational, one stage
+per supported qubit. Checked against all 592 exhaustive vectors for 6 qubits and supports up to 3
+wide, plus the defining property independently: a base address never has a bit set at a supported
+qubit.
+
+### DiagonalKernel
+
+The phase datapath: a `2^k` phase table, one complex multiplier, one amplitude per cycle, no gather,
+no scatter, no shuffle. The first block whose output is not bit-exact against the golden model, so
+it is checked twice over:
+
+1. **Against an exact integer model of its own arithmetic** (BigInt, no tolerance). This answers
+   "does the RTL do what the fixed-point spec says" without any fudge.
+2. **Against Scotty's doubles**, which answers "what does the fixed-point spec cost".
+
+Result, over a fused `RZ`/`CPHASE`/`T` block on support {0,2} at Q1.23:
+
+```
+worst deviation from Scotty over 16 amplitudes: 1.943e-07
+```
+
+One quantisation step is `2^-23` = 1.19e-7, so the complex multiply costs about 1.6 steps. **Fixed
+point is not disqualifying**, which was the open question. It is one block on one circuit, though —
+error accumulates over a circuit's depth and nothing here measures that yet.
+
+### Area, concretely
+
+CIRCT emits the complex multiplier as **four real `24x24` products** (`ac`, `bd`, `ad`, `bc`) into
+one add and one subtract, with the 47-bit products truncated at `[46:23]`. Against the dense path's
+`2^k`-wide multiply-accumulate array, that is the whole argument for keeping the three forms apart:
+at k=6 the dense path needs a 64-wide complex MAC array where the diagonal path needs four
+multipliers.
+
+### Interop, settled
+
+`-Ytasty-reader` does not work: Scala 2.13.15 resolves Scotty's package and then fails on every type
+with `class file Complex.tasty is broken`. The golden model reaches the testbench as a generated
+file instead, which is what a C++ difftest harness or an FPGA bring-up would use anyway.
+
+A trap worth recording: **Mill resolves a SNAPSHOT from `~/.ivy2/local` before `~/.m2`**, so a stale
+`sbt publishLocal` silently shadowed a fresh `publishM2Local`, and the fusion package appeared not to
+exist at all. Publish to both.
