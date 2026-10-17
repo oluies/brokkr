@@ -138,8 +138,13 @@
   }
 
   figure { margin: 2rem 0; }
-  /* The block diagram needs more room than the prose measure; it never exceeds the viewport. */
-  figure.diagram { margin-inline: calc(-1 * clamp(0px, (100vw - 43rem) / 2 - 16px, 9.5rem)); }
+  /* The block diagram needs more room than the prose measure. margin-left plus a translate
+     centres it at any width, and it never exceeds the viewport. */
+  figure.diagram {
+    width: min(62rem, calc(100vw - 32px));
+    margin-left: 50%;
+    transform: translateX(-50%);
+  }
   figure svg { width: 100%; height: auto; display: block; }
   figcaption { color: var(--ink-3); font-size: .84rem; margin-top: .8rem; }
 
@@ -511,7 +516,7 @@ Bad silicon, fine Scala.</p>
 <h2><span class="num">07</span>Proposed architecture</h2>
 
 <figure class="diagram">
-<svg viewBox="0 0 880 650" role="img" aria-labelledby="dtitle">
+<svg viewBox="0 0 960 650" role="img" aria-labelledby="dtitle">
   <title id="dtitle">Block diagram of the proposed engine, showing one datapath per block form</title>
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -519,126 +524,127 @@ Bad silicon, fine Scala.</p>
     </marker>
   </defs>
 
-  <rect class="box-hi" x="186" y="50" width="486" height="562" rx="10"/>
-  <text class="cap" x="196" y="42">THREE DATAPATHS, ONE PER BLOCK FORM</text>
+  <rect class="box-hi" x="214" y="50" width="540" height="562" rx="10"/>
+  <text class="cap" x="224" y="42">THREE DATAPATHS, ONE PER BLOCK FORM</text>
 
   <!-- CPU and the control chain -->
-  <rect class="box" x="8" y="70" width="162" height="200" rx="8" stroke-width="1"/>
+  <rect class="box" x="8" y="70" width="190" height="200" rx="8" stroke-width="1"/>
   <text class="t" x="22" y="96">CPU</text>
   <text class="s" x="22" y="116">rocket-chip / XiangShan</text>
   <text class="s" x="22" y="140">· gate fusion and form</text>
   <text class="s" x="22" y="158">&#160;&#160;classification</text>
   <text class="s" x="22" y="176">· operator construction</text>
   <text class="s" x="22" y="194">· block scheduling</text>
-  <text class="s" x="22" y="212">· wide gates, run natively</text>
+  <text class="s" x="22" y="212">· wide gates run natively</text>
   <text class="s" x="22" y="230">· measurement, classical</text>
   <text class="s" x="22" y="248">&#160;&#160;post-processing</text>
 
-  <rect class="box-2" x="8" y="300" width="162" height="80" rx="6" stroke-width="1"/>
+  <rect class="box-2" x="8" y="300" width="190" height="80" rx="6" stroke-width="1"/>
   <text class="t" x="22" y="326">TaskController</text>
-  <text class="s" x="22" y="346">descriptor queue,</text>
-  <text class="s" x="22" y="364">each tagged with its form</text>
+  <text class="s" x="22" y="346">descriptor queue, each</text>
+  <text class="s" x="22" y="364">tagged with its form</text>
 
-  <rect class="box-2" x="8" y="400" width="162" height="80" rx="6" stroke-width="1"/>
+  <rect class="box-2" x="8" y="400" width="190" height="80" rx="6" stroke-width="1"/>
   <text class="t" x="22" y="426">AddressGen</text>
   <text class="s" x="22" y="446">base + 2^k strides,</text>
   <text class="s" x="22" y="464">nthCleared per qubit</text>
 
-  <rect class="box-2" x="8" y="500" width="162" height="100" rx="6" stroke-width="1"/>
+  <rect class="box-2" x="8" y="500" width="190" height="100" rx="6" stroke-width="1"/>
   <text class="t" x="22" y="526">FormDispatch</text>
   <text class="s" x="22" y="546">routes by BlockForm.</text>
-  <text class="s" x="22" y="564">Measured mix is roughly</text>
-  <text class="s" x="22" y="582">2 : 2 : 3</text>
+  <text class="s" x="22" y="564">Measured mix is</text>
+  <text class="s" x="22" y="582">roughly 2 : 2 : 3</text>
 
   <!-- Lane A: diagonal -->
-  <rect class="box-2" x="196" y="70" width="324" height="110" rx="6" stroke-width="1"/>
-  <text class="t" x="210" y="96">Phase path &#8212; Diagonal</text>
-  <text class="s" x="210" y="116">2^k phase table and one complex multiplier</text>
-  <text class="s" x="210" y="134">no gather, no scatter, no shuffle network at all</text>
-  <text class="s" x="210" y="152">6 flops per amplitude; scales the state in place</text>
-  <text class="cap" x="210" y="172">18 OF 65 BLOCKS MEASURED</text>
+  <rect class="box-2" x="224" y="70" width="340" height="110" rx="6" stroke-width="1"/>
+  <text class="t" x="238" y="96">Phase path &#8212; Diagonal</text>
+  <text class="s" x="238" y="116">2^k phase table, one complex multiplier</text>
+  <text class="s" x="238" y="134">no gather, no scatter, no shuffle at all</text>
+  <text class="s" x="238" y="152">6 flops/amplitude; scales in place</text>
+  <text class="cap" x="238" y="172">18 OF 65 BLOCKS MEASURED</text>
 
   <!-- Lane B: monomial -->
-  <rect class="box-2" x="196" y="210" width="324" height="120" rx="6" stroke-width="1"/>
-  <text class="t" x="210" y="236">Permute path &#8212; Monomial</text>
-  <text class="s" x="210" y="256">2^k complex multipliers, no MAC array</text>
-  <text class="s" x="210" y="274">2^k index map plus 2^k phases</text>
-  <text class="s" x="210" y="292">6 flops per amplitude; permutes and scales</text>
-  <text class="cap" x="210" y="312">21 OF 65 BLOCKS MEASURED</text>
+  <rect class="box-2" x="224" y="210" width="340" height="120" rx="6" stroke-width="1"/>
+  <text class="t" x="238" y="236">Permute path &#8212; Monomial</text>
+  <text class="s" x="238" y="256">2^k complex multipliers, no MAC array</text>
+  <text class="s" x="238" y="274">2^k index map plus 2^k phases</text>
+  <text class="s" x="238" y="292">6 flops/amplitude; permutes and scales</text>
+  <text class="cap" x="238" y="312">21 OF 65 BLOCKS MEASURED</text>
 
   <!-- Lane C: dense -->
-  <rect class="box-2" x="196" y="360" width="324" height="80" rx="6" stroke-width="1"/>
-  <text class="t" x="210" y="386">OperatorReg</text>
-  <text class="s" x="210" y="406">fused 2^k x 2^k complex, 4^k entries</text>
-  <text class="s" x="210" y="424">64 KiB at k=6; 1 MiB of SRAM caps k at 8</text>
+  <rect class="box-2" x="224" y="360" width="340" height="80" rx="6" stroke-width="1"/>
+  <text class="t" x="238" y="386">OperatorReg</text>
+  <text class="s" x="238" y="406">fused 2^k x 2^k complex, 4^k entries</text>
+  <text class="s" x="238" y="424">64 KiB at k=6; 1 MiB of SRAM caps k at 8</text>
 
-  <rect class="box-2" x="196" y="460" width="324" height="140" rx="6" stroke-width="1"/>
-  <text class="t" x="210" y="486">Dense path &#8212; ComplexMAC array</text>
-  <text class="s" x="210" y="506">2^k-wide complex matvec per slice</text>
-  <text class="s" x="210" y="524">8 &#183; 2^k &#8722; 2 flops per amplitude</text>
-  <text class="s" x="210" y="542">reuse factor 2^k, intensity 2^k / 4</text>
-  <text class="s" x="210" y="560">the only form that needs multipliers in bulk</text>
-  <text class="cap" x="210" y="580">26 OF 65 BLOCKS MEASURED</text>
+  <rect class="box-2" x="224" y="460" width="340" height="140" rx="6" stroke-width="1"/>
+  <text class="t" x="238" y="486">Dense path &#8212; ComplexMAC</text>
+  <text class="s" x="238" y="506">2^k-wide complex matvec per slice</text>
+  <text class="s" x="238" y="524">8 &#183; 2^k &#8722; 2 flops/amplitude</text>
+  <text class="s" x="238" y="542">reuse factor 2^k, intensity 2^k / 4</text>
+  <text class="s" x="238" y="560">the only form needing bulk multipliers</text>
+  <text class="cap" x="238" y="580">26 OF 65 BLOCKS MEASURED</text>
 
   <!-- Shared shuffle fabric -->
-  <rect class="box-2" x="546" y="210" width="114" height="390" rx="6" stroke-width="1"/>
-  <text class="t" x="556" y="236">Omega</text>
-  <text class="s" x="556" y="256">shuffle network</text>
-  <text class="s" x="556" y="280">shared by the</text>
-  <text class="s" x="556" y="298">permute and</text>
-  <text class="s" x="556" y="316">dense paths</text>
-  <text class="s" x="556" y="340">qubit stride is a</text>
-  <text class="s" x="556" y="358">bit permutation,</text>
-  <text class="s" x="556" y="376">which is what this</text>
-  <text class="s" x="556" y="394">fabric is for</text>
-  <text class="s" x="556" y="418">bank-conflict</text>
-  <text class="s" x="556" y="436">freedom is</text>
-  <text class="s" x="556" y="454">UNPROVEN</text>
+  <rect class="box-2" x="590" y="210" width="150" height="390" rx="6" stroke-width="1"/>
+  <text class="t" x="600" y="236">Omega</text>
+  <text class="s" x="600" y="256">shuffle network</text>
+  <text class="s" x="600" y="286">shared by the</text>
+  <text class="s" x="600" y="304">permute and</text>
+  <text class="s" x="600" y="322">dense paths only</text>
+  <text class="s" x="600" y="352">a qubit stride is</text>
+  <text class="s" x="600" y="370">a bit permutation,</text>
+  <text class="s" x="600" y="388">which is what</text>
+  <text class="s" x="600" y="406">this fabric is for</text>
+  <text class="s" x="600" y="436">bank-conflict</text>
+  <text class="s" x="600" y="454">freedom at every</text>
+  <text class="s" x="600" y="472">stride is</text>
+  <text class="cap" x="600" y="494">UNPROVEN</text>
 
   <!-- Memory and verification -->
-  <rect class="box" x="686" y="70" width="186" height="220" rx="8" stroke-width="1"/>
-  <text class="t" x="698" y="96">Amplitude store</text>
-  <text class="s" x="698" y="116">banked by low qubit index</text>
-  <text class="s" x="698" y="140">on-chip: n &#8804; 20</text>
-  <text class="s" x="698" y="158">XSAICache L2: n &#8804; 22</text>
-  <text class="s" x="698" y="176">HBM / DDR: n &#8804; 32</text>
-  <text class="s" x="698" y="194">a 64 GB laptop: n = 32</text>
-  <text class="s" x="698" y="218">2^n x 16 B, fp64 complex</text>
-  <text class="s" x="698" y="242">capacity is the ceiling</text>
-  <text class="s" x="698" y="260">silicon cannot lift</text>
+  <rect class="box" x="766" y="70" width="186" height="220" rx="8" stroke-width="1"/>
+  <text class="t" x="778" y="96">Amplitude store</text>
+  <text class="s" x="778" y="116">banked by low qubit index</text>
+  <text class="s" x="778" y="140">on-chip: n &#8804; 20</text>
+  <text class="s" x="778" y="158">XSAICache L2: n &#8804; 22</text>
+  <text class="s" x="778" y="176">HBM / DDR: n &#8804; 32</text>
+  <text class="s" x="778" y="194">a 64 GB laptop: n = 32</text>
+  <text class="s" x="778" y="218">2^n x 16 B, fp64 complex</text>
+  <text class="s" x="778" y="242">capacity is the ceiling</text>
+  <text class="s" x="778" y="260">silicon cannot lift</text>
 
-  <rect class="box" x="686" y="330" width="186" height="120" rx="8" stroke-width="1"/>
-  <text class="t" x="698" y="356">Difftest tap</text>
-  <text class="s" x="698" y="376">per-block compare against</text>
-  <text class="s" x="698" y="394">Scotty as golden model</text>
-  <text class="s" x="698" y="412">Grover: marked amp &#8594; 1</text>
-  <text class="s" x="698" y="430">Shor: period &#8594; 4</text>
+  <rect class="box" x="766" y="330" width="186" height="120" rx="8" stroke-width="1"/>
+  <text class="t" x="778" y="356">Difftest tap</text>
+  <text class="s" x="778" y="376">per-block compare with</text>
+  <text class="s" x="778" y="394">Scotty as golden model</text>
+  <text class="s" x="778" y="412">Grover: marked amp &#8594; 1</text>
+  <text class="s" x="778" y="430">Shor: period &#8594; 4</text>
 
-  <rect class="box" x="686" y="480" width="186" height="120" rx="8" stroke-width="1"/>
-  <text class="t" x="698" y="506">Native fallback</text>
-  <text class="s" x="698" y="526">gates wider than the</text>
-  <text class="s" x="698" y="544">budget stay on the CPU</text>
-  <text class="s" x="698" y="562">(Grover's all-qubit CZ:</text>
-  <text class="s" x="698" y="580">8 of 71 ops)</text>
+  <rect class="box" x="766" y="480" width="186" height="120" rx="8" stroke-width="1"/>
+  <text class="t" x="778" y="506">Native fallback</text>
+  <text class="s" x="778" y="526">gates wider than the</text>
+  <text class="s" x="778" y="544">budget stay on the CPU</text>
+  <text class="s" x="778" y="562">(Grover's all-qubit CZ:</text>
+  <text class="s" x="778" y="580">8 of 71 ops)</text>
 
   <!-- control chain -->
-  <path class="arrow" d="M 89 270 L 89 296" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 89 380 L 89 396" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 89 480 L 89 496" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 103 270 L 103 296" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 103 380 L 103 396" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 103 480 L 103 496" marker-end="url(#ah)"/>
 
   <!-- dispatch bus into the three lanes -->
-  <path class="arrow" d="M 170 550 L 183 550 L 183 125 L 196 125" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 183 270 L 196 270" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 183 400 L 196 400" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 198 550 L 208 550 L 208 125 L 224 125" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 208 270 L 224 270" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 208 400 L 224 400" marker-end="url(#ah)"/>
 
   <!-- data paths -->
-  <path class="arrow" d="M 520 125 L 686 125" marker-start="url(#ah)" marker-end="url(#ah)"/>
-  <text class="s" x="548" y="118">straight to the banks</text>
-  <path class="arrow" d="M 520 270 L 546 270" marker-start="url(#ah)" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 520 520 L 546 520" marker-start="url(#ah)" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 358 440 L 358 456" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 660 250 L 686 250" marker-start="url(#ah)" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 779 290 L 779 326" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 564 125 L 766 125" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <text class="s" x="600" y="116">straight to the banks</text>
+  <path class="arrow" d="M 564 270 L 590 270" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 564 520 L 590 520" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 394 440 L 394 456" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 740 250 L 766 250" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 859 290 L 859 326" marker-end="url(#ah)"/>
 </svg>
 <figcaption>The dense path is the one a CUTE-derived design gives you for free — <code>ABMatrixReg</code>
 becomes <code>OperatorReg</code>, <code>MatrixTE</code> and <code>ReducePE</code> become
