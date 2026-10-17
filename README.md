@@ -9,13 +9,46 @@ A design assessment, and eventually an implementation, of a
 
 ## Status
 
-No RTL exists yet, and this README will say so until it does. What exists:
+One block of RTL exists. The engine does not. What is here:
 
 - the design assessment in `docs/`, published to GitHub Pages;
 - the measurement record in `notes/`;
-- a gate-fusion pass in [Scotty](https://github.com/oluies/scotty/tree/pctc)
-  (`scotty.simulator.fusion`), which is stage 1 of the roadmap and lives there rather than here
-  because it is a simulator optimisation in its own right.
+- `rtl/` — Chisel, starting with `AddressGen`;
+- `vectors/` — the Scala 3 generator that produces golden vectors from Scotty.
+
+The gate-fusion pass that motivated all of it lives in
+[Scotty](https://github.com/oluies/scotty/tree/pctc) (`scotty.simulator.fusion`) rather than here,
+because it is a simulator optimisation in its own right.
+
+## Building the RTL
+
+```bash
+./mill rtl.test                       # AddressGen against Scotty's vectors
+./mill rtl.runMain brokkr.Generate    # emit SystemVerilog via CIRCT
+```
+
+No HDL toolchain is required to get this far: `chiseltest` interprets the design on the JVM, and
+firtool is fetched as an ordinary dependency. Verilator only becomes necessary when the design
+outgrows interpretation.
+
+Regenerating the golden vectors needs Scotty published locally — **both** to Ivy and to M2, since
+Mill resolves a `SNAPSHOT` from `~/.ivy2/local` first and a stale copy there will silently shadow a
+fresh one in `~/.m2`:
+
+```bash
+cd ../scotty && sbt publishLocal publishM2
+cd ../brokkr && ./mill vectors.runMain brokkr.vectors.AddressVectors rtl/src/test/resources/address-vectors.txt
+```
+
+### Why two Scala versions
+
+Chisel is published for Scala 2.13 and Scotty is Scala 3.9, and they cannot call each other. CUTE's
+build sets `-Ytasty-reader`, which in principle lets 2.13 read Scala 3 signatures, so it was worth
+testing: 2.13.15 resolves the package and then fails on every type with `class file Complex.tasty is
+broken`. Scotty's TASTy is newer than that reader understands.
+
+So the golden model reaches the testbench as a generated file. That is the better arrangement
+anyway — it is the same mechanism a C++ difftest harness or an FPGA bring-up would use.
 
 ## The question
 

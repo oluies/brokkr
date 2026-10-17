@@ -1,0 +1,59 @@
+package build
+
+import mill.*
+import mill.scalalib.*
+
+/** Brokkr's RTL, and the golden vectors it is verified against.
+  *
+  * Two modules on two Scala versions, because they have to be. Chisel is published for 2.13 and
+  * mirroring CUTE's build is what keeps its modules — rocket-chip, Utility, XSAICache — reusable;
+  * Scotty, the golden model, is Scala 3.9.
+  *
+  * Calling Scotty directly from the 2.13 testbench does not work. CUTE's build.sc sets
+  * `-Ytasty-reader`, which in principle lets 2.13 read Scala 3 signatures, and it was worth trying:
+  * 2.13.15 resolves the package but fails on every type with "class file Complex.tasty is broken".
+  * Scotty's 3.9 TASTy is simply newer than that reader understands. So the golden model feeds the
+  * testbench the way difftest does it — through generated vectors — which is a better arrangement
+  * anyway, since it is the same mechanism a C++ or FPGA harness would use.
+  */
+object vectors extends ScalaModule {
+  def scalaVersion = "3.9.0"
+
+  def scalacOptions = Seq("-deprecation", "-feature", "-unchecked", "-release:21")
+
+  def mvnDeps = Seq(mvn"xyz.entangled::scotty:0.7.0-SNAPSHOT")
+
+  def sources = Task.Sources(moduleDir / "src" / "main" / "scala")
+}
+
+object rtl extends ScalaModule {
+  def scalaVersion = "2.13.15"
+
+  def chiselVersion = "6.7.0"
+
+  def scalacOptions = Seq(
+    "-deprecation",
+    "-feature",
+    "-unchecked",
+    "-language:reflectiveCalls",
+    "-Ymacro-annotations"
+  )
+
+  def mvnDeps = Seq(mvn"org.chipsalliance::chisel:$chiselVersion")
+
+  def scalacPluginMvnDeps = Seq(mvn"org.chipsalliance:::chisel-plugin:$chiselVersion")
+
+  // Mill's default source root is rtl/src, which would swallow the test tree as well.
+  def sources = Task.Sources(moduleDir / "src" / "main" / "scala")
+
+  object test extends ScalaTests with TestModule.ScalaTest {
+    def mvnDeps = Seq(
+      mvn"org.scalatest::scalatest:3.2.20",
+      mvn"edu.berkeley.cs::chiseltest:6.0.0"
+    )
+
+    def sources = Task.Sources(moduleDir / os.up / "src" / "test" / "scala")
+
+    def resources = Task.Sources(moduleDir / os.up / "src" / "test" / "resources")
+  }
+}

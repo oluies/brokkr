@@ -180,7 +180,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: form-aware fusion landed and measured, no RTL yet ·
+  <p class="meta">17 October 2026 · status: form-aware fusion measured; first RTL block verified ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -721,9 +721,16 @@ would leave most of its area idle on real circuits.</figcaption>
   </ul>
 </div>
 
-<div class="stage">
-  <p class="when">Stage 3 · Chisel · multi-month</p>
+<div class="stage now">
+  <p class="when">Stage 3 · begun · one block standing</p>
   <h3>RTL</h3>
+  <p><strong>The first block exists and is verified.</strong> <code>AddressGen</code> — the
+  bit-insertion logic that turns a slice number into a base amplitude address — is written in Chisel,
+  checked against all 592 exhaustive vectors Scotty produces for six qubits and supports up to three
+  wide, and emits clean combinational SystemVerilog through CIRCT. It needed no HDL toolchain
+  installed: <code>chiseltest</code> interprets on the JVM and firtool is fetched as a dependency.
+  The two Scala versions meet through a generated vector file, for the reason given under
+  verification below.</p>
   <p>A Scala 2.13 + Chisel 6.7 Mill project mirroring CUTE’s <code>build.sc</code>, with
   <code>rocket-chip</code>, <code>Utility</code> and <code>XSAICache</code> as submodules.</p>
   <ul>
@@ -760,11 +767,14 @@ point rather than an incidental one.</p>
   tells you two implementations agree; these tell you the implementation is right. Both are asserted
   at every fusion width, so a pass that preserved norm and phase relationships but broke the
   algorithm would still be caught.</li>
-  <li><strong>Scala 2.13 consuming Scala 3.</strong> CUTE already sets <code>-Ytasty-reader</code>,
-  which in principle lets Chisel code use Scotty’s jar directly. <em>Verify before relying on
-  it</em> — tasty-reader support is partial and Scotty is on 3.9 LTS. The fallback is a trace dumped
-  by Scotty and replayed by a C++ harness, which is how <code>CuteDifftest</code> and
-  <code>CUTEFPE</code> appear to work anyway.</li>
+  <li><strong>Scala 2.13 consuming Scala 3: tried, and it does not work.</strong> CUTE sets
+  <code>-Ytasty-reader</code>, which in principle lets Chisel code call Scotty’s jar directly, so it
+  was worth testing rather than assuming. 2.13.15 resolves the package and then fails on every type
+  with <code>class file Complex.tasty is broken</code> — Scotty’s 3.9 TASTy is simply newer than that
+  reader understands. So the golden model feeds the testbench through <strong>generated
+  vectors</strong>, which is the better arrangement regardless: it is the same mechanism a C++
+  difftest harness or an FPGA bring-up would use, and it is how <code>CuteDifftest</code> and
+  <code>CUTEFPE</code> appear to work.</li>
 </ul>
 
 <h2><span class="num">10</span>Open risks</h2>
@@ -802,7 +812,7 @@ point rather than an incidental one.</p>
   <a href="https://github.com/oluies/scotty">scotty</a> (the simulator and golden model) and
   <a href="https://github.com/oluies/pctc">pctc</a> (noisy post-selected closed timelike curves,
   the workload that started this). Apache-2.0.</p>
-  <p>No RTL exists yet, and this page will say so until it does.</p>
+  <p>One block of RTL exists. The engine does not.</p>
 </footer>
 </div>
 
