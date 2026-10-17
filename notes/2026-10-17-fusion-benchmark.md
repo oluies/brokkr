@@ -79,3 +79,65 @@ Two conclusions, and the second is the one that matters for the architecture:
    `PHASE`, `CPHASE`) are a large fraction of real circuits and want one multiplier and a phase
    table, not a MAC array. RTL that only does dense blocks would run Grover slower than the CPU it
    hangs off.
+
+## Addendum 2: sparsity-aware lowering
+
+Operators are now stored in the tightest of three forms, closed under composition:
+
+| form | stores | flops/amplitude | datapath |
+|---|---|---|---|
+| Diagonal | 2^k | 6 | multiplier + phase table; no gather, scatter or shuffle |
+| Monomial | 2^k | 6 | shuffle network, no multiplier array |
+| Dense | 4^k | 8·2^k − 2 | MAC array |
+
+Plus a `NativeOp` escape: gates wider than the fusion budget are not lowered at all, since the
+simulator applies an all-qubit controlled gate in one pass.
+
+### Brickwork, 22 qubits (model columns, deterministic)
+
+```
+width  blocks  flop/byte    flops  traffic  operator
+ none     327       0.34     1.0x     1.0x         -
+    2     195       0.44     0.8x     0.6x     256 B
+    3     148       0.76     1.0x     0.5x     1 KiB
+    4      98       1.57     1.4x     0.3x     4 KiB
+    5      83       3.18     2.4x     0.3x    16 KiB
+    6      65       6.49     3.8x     0.2x    64 KiB
+
+form mix at width 6: 26 Dense, 18 Diagonal, 21 Monomial, 0 native
+```
+
+Flop inflation at width 4: 2.2x -> 1.4x. At width 6: 5.9x -> 3.8x. At width 2 the fused circuit now
+does *fewer* flops than unfused. The unfused modelled intensity drops 0.53 -> 0.34 because the model
+now correctly recognises `RZ` as diagonal and `CNOT` as monomial.
+
+### Grover, 14 qubits — previously not expressible above 10
+
+```
+width  blocks  flop/byte    flops  traffic  operator
+ none     254       0.32     1.0x     1.0x         -
+    2     123       0.56     0.9x     0.5x     256 B
+    3      85       1.08     1.3x     0.4x     1 KiB
+    4      63       2.08     1.8x     0.3x     4 KiB
+    5      51       3.93     2.9x     0.2x    16 KiB
+    6      43       7.18     4.8x     0.2x    64 KiB
+
+form mix at width 6: 27 Dense, 16 Monomial, 8 native
+```
+
+Eight native ops — one per oracle and one per diffusion operator across four iterations, exactly as
+designed. Largest operator 64 KiB against 16 MiB before: a 256x reduction.
+
+### Timing caveat
+
+**Wall-clock was not measurable.** The machine sat at load average 36 on 18 cores while measuring
+(an unrelated project's Python process at 922% CPU), and the *unchanged* unfused baseline swung
+between 336 ms and 2362 ms across runs. Fused Grover was consistently about 2x faster than unfused
+across widths 2-5, and fused brickwork won at widths 2-4, but neither figure is trustworthy until
+re-measured on a quiet machine. The model columns above are deterministic and unaffected.
+
+### Architectural consequence
+
+The engine needs **three paths, not one**, in roughly a 2:2:3 diagonal:monomial:dense mix on the
+workloads measured so far. Sizing a MAC array for 100% of blocks would waste most of it. The block
+diagram in the assessment has not been redrawn for this yet.

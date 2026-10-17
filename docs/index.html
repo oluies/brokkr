@@ -173,7 +173,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: fusion pass and algorithm vectors landed, no RTL yet ·
+  <p class="meta">17 October 2026 · status: sparsity-aware fusion landed, no RTL yet ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -370,6 +370,61 @@ wrong engine</strong>. Diagonal operators — multi-controlled <code>Z</code>, <
 path in both the fusion pass and the hardware: one multiplier and a phase table, not a MAC array.
 Any RTL that only does dense blocks would run Grover slower than the CPU it is attached to.</p>
 
+<h3>The form lattice, and what it changed</h3>
+
+<p>So the pass no longer stores a dense operator unless it has to. Operators are kept in the tightest
+of three forms, which is closed under composition — and these are not three storage optimisations,
+they are <strong>three different datapaths</strong>:</p>
+
+<div class="tablewrap">
+<table>
+  <caption>The form lattice. Only the dense form needs a multiplier array; only the lower two have
+  storage linear in the dimension.</caption>
+  <thead><tr>
+    <th>form</th><th>stores</th><th>flops / amplitude</th><th class="note">datapath it needs</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>Diagonal</td><td>2^k</td><td>6</td><td class="note">a multiplier and a phase table.
+    No gather, no scatter, no shuffle network — every amplitude is scaled in place.</td></tr>
+    <tr><td>Monomial</td><td>2^k</td><td>6</td><td class="note">the shuffle network, but no
+    multiplier array: 2^k amplitudes in, the same 2^k out, permuted and scaled.</td></tr>
+    <tr><td>Dense</td><td>4^k</td><td>8·2^k − 2</td><td class="note">the MAC array. The only form
+    that does.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>The form is decided by <em>reading the matrix</em> rather than from a table of gate names, so it
+cannot disagree with the semantics and classifies <code>Dagger</code> and user-defined gates for
+free. Controlled gates inherit their target’s form, which is why <code>CZ</code>, <code>CPHASE</code>
+and every multi-controlled <code>Z</code> now cost <span class="mono">2<sup>k</sup></span>. Dense
+products are re-classified after multiplication, which catches H-after-H and most Clifford
+cancellations. And gates wider than the fusion budget are not lowered at all — they become a
+<em>native op</em> that the simulator applies in one pass, because building any operator for an
+all-qubit controlled gate, even a cheap one, is the pass making work for itself.</p>
+
+<div class="verdict">
+  <span class="label cool">What it bought</span>
+  <p><strong>Brickwork, 22 qubits.</strong> Flop inflation at width 4 falls from
+  <span class="f">2.2×</span> to <span class="f">1.4×</span>, and at width 6 from
+  <span class="f">5.9×</span> to <span class="f">3.8×</span>; at width 2 the fused circuit now does
+  <em>fewer</em> flops than the unfused one. The form mix at width 6 is 26 dense, 18 diagonal and 21
+  monomial — <strong>60% of blocks never touch the MAC array.</strong></p>
+  <p><strong>Grover, 14 qubits</strong> — previously not expressible above ten at all. Eight native
+  ops, one per oracle and diffusion operator; largest operator <strong>64 KiB against 16 MiB</strong>,
+  a 256× reduction; traffic at <span class="f">0.3×</span> for only <span class="f">1.8×</span> the
+  flops.</p>
+  <p>Wall-clock is deliberately not quoted here. The machine was at load average 36 while measuring
+  and the unfused baseline swung between 336 ms and 2362 ms. Grover was consistently around twice as
+  fast fused across widths 2–5, but that needs re-measuring on a quiet machine before it belongs on
+  this page.</p>
+</div>
+
+<p>The architectural consequence is the important part. The engine needs <strong>three paths, not
+one</strong>: a phase path with no shuffle at all, a permutation path with no multipliers, and the
+MAC array for what is genuinely dense. Sizing the MAC array for 100% of blocks would waste most of
+it.</p>
+
 <h2><span class="num">05</span>The capacity ceiling</h2>
 
 <p>This part is unforgiving, and no amount of silicon fixes it. A single-precision complex amplitude
@@ -545,10 +600,12 @@ array, <code>XSAICache</code> on the memory side, and difftest against a softwar
     constructed DFT matrix, Grover, and Shor’s period finding for 15 with the standard hand-compiled
     modular exponentiation. These are the difftest vectors for every later stage, and they are
     checked for the <em>answer</em>, not just for agreement.</li>
-    <li><strong>Next, and now the clear priority:</strong> sparsity-aware lowering. Keep diagonal and
-    permutation gates in their cheap form instead of densifying them. The Grover numbers above make
-    this the single largest lever, and it changes the hardware requirement too.</li>
-    <li>Commutation-aware and look-ahead placement policies, measured against greedy.</li>
+    <li><strong>Done:</strong> sparsity-aware lowering — the form lattice above, the native escape
+    for gates wider than the budget, and a flop-budget knob on the pass, since whether trading
+    traffic for arithmetic is a good deal depends on the machine. 202 tests pass.</li>
+    <li><strong>Next:</strong> re-measure wall-clock on a quiet machine, then commutation-aware and
+    look-ahead placement. What those policies should optimise has changed: it is the form mix now,
+    not the block count.</li>
     <li>A Scala.js path for the simulator. The algorithms are platform-neutral, but
     <code>QuantumSimulator</code> imports <code>scala.collection.parallel</code>, which is JVM-only —
     which is why <code>pctc</code>’s browser build compiles only the density-matrix sources. The
@@ -623,10 +680,10 @@ point rather than an incidental one.</p>
   <li><strong>The exchange rate may never close.</strong> If an achievable MAC array cannot beat
   <span class="mono">8·2<sup>k</sup>/14k</span> flops per <span class="mono">k</span>× of bandwidth
   saved, there is no engine worth building. Stage 2 exists to answer this before any RTL.</li>
-  <li><strong>A dense-only datapath is not enough.</strong> The Grover measurement is the evidence:
-  diagonal operators are common and nearly free, and an engine that can only do dense blocks loses to
-  the CPU on them. The architecture needs a phase path alongside the MAC array, which is not in the
-  diagram above yet because the cost of it is not yet estimated.</li>
+  <li><strong>Three datapaths, not one — and the diagram above still shows one.</strong> The form
+  lattice settles what the engine has to serve: a phase path, a permutation path and a MAC array, in
+  roughly a 2:2:3 mix on the workloads measured so far. The area cost of the two cheap paths is not
+  yet estimated, and the block diagram has not been redrawn.</li>
   <li><strong>Bank conflicts.</strong> The Omega network is the right <em>kind</em> of fabric, but
   whether it resolves every stride without stalls is unproven here.</li>
   <li><strong>Operator construction on the critical path.</strong> Fusion costs
