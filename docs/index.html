@@ -138,6 +138,8 @@
   }
 
   figure { margin: 2rem 0; }
+  /* The block diagram needs more room than the prose measure; it never exceeds the viewport. */
+  figure.diagram { margin-inline: calc(-1 * clamp(0px, (100vw - 43rem) / 2 - 16px, 9.5rem)); }
   figure svg { width: 100%; height: auto; display: block; }
   figcaption { color: var(--ink-3); font-size: .84rem; margin-top: .8rem; }
 
@@ -509,97 +511,142 @@ Bad silicon, fine Scala.</p>
 <h2><span class="num">07</span>Proposed architecture</h2>
 
 <figure class="diagram">
-<svg viewBox="0 0 880 450" role="img" aria-labelledby="dtitle">
-  <title id="dtitle">Block diagram of the proposed fused-block quantum simulation engine</title>
+<svg viewBox="0 0 880 650" role="img" aria-labelledby="dtitle">
+  <title id="dtitle">Block diagram of the proposed engine, showing one datapath per block form</title>
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--ink-3)"/>
     </marker>
-    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent-2)"/>
-    </marker>
   </defs>
 
-  <rect class="box-hi" x="196" y="54" width="470" height="300" rx="10"/>
-  <text class="cap" x="206" y="46">BROKKR ENGINE</text>
+  <rect class="box-hi" x="186" y="50" width="486" height="562" rx="10"/>
+  <text class="cap" x="196" y="42">THREE DATAPATHS, ONE PER BLOCK FORM</text>
 
-  <!-- CPU -->
-  <rect class="box" x="8" y="80" width="170" height="150" rx="8" stroke-width="1"/>
-  <text class="t" x="24" y="106">CPU</text>
-  <text class="s" x="24" y="124">rocket-chip / XiangShan</text>
-  <text class="s" x="24" y="152">· gate-fusion pass</text>
-  <text class="s" x="24" y="170">· block scheduling</text>
-  <text class="s" x="24" y="188">· operator construction</text>
-  <text class="s" x="24" y="206">· measurement, classical post</text>
+  <!-- CPU and the control chain -->
+  <rect class="box" x="8" y="70" width="162" height="200" rx="8" stroke-width="1"/>
+  <text class="t" x="22" y="96">CPU</text>
+  <text class="s" x="22" y="116">rocket-chip / XiangShan</text>
+  <text class="s" x="22" y="140">· gate fusion and form</text>
+  <text class="s" x="22" y="158">&#160;&#160;classification</text>
+  <text class="s" x="22" y="176">· operator construction</text>
+  <text class="s" x="22" y="194">· block scheduling</text>
+  <text class="s" x="22" y="212">· wide gates, run natively</text>
+  <text class="s" x="22" y="230">· measurement, classical</text>
+  <text class="s" x="22" y="248">&#160;&#160;post-processing</text>
 
-  <!-- TaskController -->
-  <rect class="box-2" x="216" y="80" width="190" height="62" rx="6" stroke-width="1"/>
-  <text class="t" x="230" y="104">TaskController</text>
-  <text class="s" x="230" y="122">block descriptor queue</text>
+  <rect class="box-2" x="8" y="300" width="162" height="80" rx="6" stroke-width="1"/>
+  <text class="t" x="22" y="326">TaskController</text>
+  <text class="s" x="22" y="346">descriptor queue,</text>
+  <text class="s" x="22" y="364">each tagged with its form</text>
 
-  <!-- AddressGen -->
-  <rect class="box-2" x="216" y="166" width="190" height="62" rx="6" stroke-width="1"/>
-  <text class="t" x="230" y="190">AddressGen</text>
-  <text class="s" x="230" y="208">base + 2^k strides</text>
+  <rect class="box-2" x="8" y="400" width="162" height="80" rx="6" stroke-width="1"/>
+  <text class="t" x="22" y="426">AddressGen</text>
+  <text class="s" x="22" y="446">base + 2^k strides,</text>
+  <text class="s" x="22" y="464">nthCleared per qubit</text>
 
-  <!-- Shuffle -->
-  <rect class="box-2" x="216" y="252" width="190" height="80" rx="6" stroke-width="1"/>
-  <text class="t" x="230" y="276">OmegaNetwork</text>
-  <text class="s" x="230" y="294">bit-permutation fabric;</text>
-  <text class="s" x="230" y="310">makes qubit stride</text>
-  <text class="s" x="230" y="326">bank-conflict free</text>
+  <rect class="box-2" x="8" y="500" width="162" height="100" rx="6" stroke-width="1"/>
+  <text class="t" x="22" y="526">FormDispatch</text>
+  <text class="s" x="22" y="546">routes by BlockForm.</text>
+  <text class="s" x="22" y="564">Measured mix is roughly</text>
+  <text class="s" x="22" y="582">2 : 2 : 3</text>
 
-  <!-- OperatorReg -->
-  <rect class="box-2" x="440" y="80" width="206" height="80" rx="6" stroke-width="1"/>
-  <text class="t" x="454" y="104">OperatorReg</text>
-  <text class="s" x="454" y="122">fused 2^k x 2^k complex,</text>
-  <text class="s" x="454" y="138">k = 6..8, 64 KiB..1 MiB,</text>
-  <text class="s" x="454" y="154">loaded once per block</text>
+  <!-- Lane A: diagonal -->
+  <rect class="box-2" x="196" y="70" width="324" height="110" rx="6" stroke-width="1"/>
+  <text class="t" x="210" y="96">Phase path &#8212; Diagonal</text>
+  <text class="s" x="210" y="116">2^k phase table and one complex multiplier</text>
+  <text class="s" x="210" y="134">no gather, no scatter, no shuffle network at all</text>
+  <text class="s" x="210" y="152">6 flops per amplitude; scales the state in place</text>
+  <text class="cap" x="210" y="172">18 OF 65 BLOCKS MEASURED</text>
 
-  <!-- MAC array -->
-  <rect class="box-2" x="440" y="184" width="206" height="148" rx="6" stroke-width="1"/>
-  <text class="t" x="454" y="208">ComplexMAC array</text>
-  <text class="s" x="454" y="226">2^k-wide complex matvec</text>
-  <text class="s" x="454" y="244">per slice; 4 real mul +</text>
-  <text class="s" x="454" y="262">2 add per complex mul</text>
-  <text class="s" x="454" y="288">reuse factor = 2^k</text>
-  <text class="s" x="454" y="306">intensity = 2^k / 4</text>
-  <text class="s" x="454" y="324">(CUTEFPE-derived FPUs)</text>
+  <!-- Lane B: monomial -->
+  <rect class="box-2" x="196" y="210" width="324" height="120" rx="6" stroke-width="1"/>
+  <text class="t" x="210" y="236">Permute path &#8212; Monomial</text>
+  <text class="s" x="210" y="256">2^k complex multipliers, no MAC array</text>
+  <text class="s" x="210" y="274">2^k index map plus 2^k phases</text>
+  <text class="s" x="210" y="292">6 flops per amplitude; permutes and scales</text>
+  <text class="cap" x="210" y="312">21 OF 65 BLOCKS MEASURED</text>
 
-  <!-- Memory -->
-  <rect class="box" x="684" y="80" width="188" height="150" rx="8" stroke-width="1"/>
-  <text class="t" x="698" y="106">Amplitude store</text>
-  <text class="s" x="698" y="124">banked by low qubit index</text>
-  <text class="s" x="698" y="152">on-chip: n &lt;= 20</text>
-  <text class="s" x="698" y="170">XSAICache L2: n &lt;= 22</text>
-  <text class="s" x="698" y="188">HBM / DDR: n &lt;= 32</text>
-  <text class="s" x="698" y="214">2^n x 16 B, fp64 complex</text>
+  <!-- Lane C: dense -->
+  <rect class="box-2" x="196" y="360" width="324" height="80" rx="6" stroke-width="1"/>
+  <text class="t" x="210" y="386">OperatorReg</text>
+  <text class="s" x="210" y="406">fused 2^k x 2^k complex, 4^k entries</text>
+  <text class="s" x="210" y="424">64 KiB at k=6; 1 MiB of SRAM caps k at 8</text>
 
-  <!-- Difftest -->
-  <rect class="box" x="684" y="262" width="188" height="92" rx="8" stroke-width="1"/>
-  <text class="t" x="698" y="288">Difftest tap</text>
-  <text class="s" x="698" y="306">per-block state compare</text>
-  <text class="s" x="698" y="324">against Scotty as the</text>
-  <text class="s" x="698" y="340">golden model</text>
+  <rect class="box-2" x="196" y="460" width="324" height="140" rx="6" stroke-width="1"/>
+  <text class="t" x="210" y="486">Dense path &#8212; ComplexMAC array</text>
+  <text class="s" x="210" y="506">2^k-wide complex matvec per slice</text>
+  <text class="s" x="210" y="524">8 &#183; 2^k &#8722; 2 flops per amplitude</text>
+  <text class="s" x="210" y="542">reuse factor 2^k, intensity 2^k / 4</text>
+  <text class="s" x="210" y="560">the only form that needs multipliers in bulk</text>
+  <text class="cap" x="210" y="580">26 OF 65 BLOCKS MEASURED</text>
 
-  <!-- arrows -->
-  <path class="arrow" d="M 178 112 L 210 112" marker-end="url(#ah)"/>
-  <text class="s" x="180" y="104">descriptors</text>
-  <path class="arrow" d="M 178 196 L 210 196" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 311 142 L 311 160" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 311 228 L 311 246" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 406 290 L 440 290" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 440 274 L 406 274" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 543 160 L 543 178" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 646 290 C 670 290 672 160 684 150" marker-end="url(#ah)"/>
-  <path class="arrow" d="M 684 130 C 666 120 664 270 646 276" marker-end="url(#ah)"/>
-  <text class="s" x="556" y="352">gather / scatter</text>
-  <path class="arrow-2" d="M 160 230 C 160 400 600 400 778 356" marker-end="url(#ah2)"/>
-  <text class="s" x="300" y="398" fill="var(--accent-2)">Scotty golden model (Scala 3, difftest reference)</text>
+  <!-- Shared shuffle fabric -->
+  <rect class="box-2" x="546" y="210" width="114" height="390" rx="6" stroke-width="1"/>
+  <text class="t" x="556" y="236">Omega</text>
+  <text class="s" x="556" y="256">shuffle network</text>
+  <text class="s" x="556" y="280">shared by the</text>
+  <text class="s" x="556" y="298">permute and</text>
+  <text class="s" x="556" y="316">dense paths</text>
+  <text class="s" x="556" y="340">qubit stride is a</text>
+  <text class="s" x="556" y="358">bit permutation,</text>
+  <text class="s" x="556" y="376">which is what this</text>
+  <text class="s" x="556" y="394">fabric is for</text>
+  <text class="s" x="556" y="418">bank-conflict</text>
+  <text class="s" x="556" y="436">freedom is</text>
+  <text class="s" x="556" y="454">UNPROVEN</text>
+
+  <!-- Memory and verification -->
+  <rect class="box" x="686" y="70" width="186" height="220" rx="8" stroke-width="1"/>
+  <text class="t" x="698" y="96">Amplitude store</text>
+  <text class="s" x="698" y="116">banked by low qubit index</text>
+  <text class="s" x="698" y="140">on-chip: n &#8804; 20</text>
+  <text class="s" x="698" y="158">XSAICache L2: n &#8804; 22</text>
+  <text class="s" x="698" y="176">HBM / DDR: n &#8804; 32</text>
+  <text class="s" x="698" y="194">a 64 GB laptop: n = 32</text>
+  <text class="s" x="698" y="218">2^n x 16 B, fp64 complex</text>
+  <text class="s" x="698" y="242">capacity is the ceiling</text>
+  <text class="s" x="698" y="260">silicon cannot lift</text>
+
+  <rect class="box" x="686" y="330" width="186" height="120" rx="8" stroke-width="1"/>
+  <text class="t" x="698" y="356">Difftest tap</text>
+  <text class="s" x="698" y="376">per-block compare against</text>
+  <text class="s" x="698" y="394">Scotty as golden model</text>
+  <text class="s" x="698" y="412">Grover: marked amp &#8594; 1</text>
+  <text class="s" x="698" y="430">Shor: period &#8594; 4</text>
+
+  <rect class="box" x="686" y="480" width="186" height="120" rx="8" stroke-width="1"/>
+  <text class="t" x="698" y="506">Native fallback</text>
+  <text class="s" x="698" y="526">gates wider than the</text>
+  <text class="s" x="698" y="544">budget stay on the CPU</text>
+  <text class="s" x="698" y="562">(Grover's all-qubit CZ:</text>
+  <text class="s" x="698" y="580">8 of 71 ops)</text>
+
+  <!-- control chain -->
+  <path class="arrow" d="M 89 270 L 89 296" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 89 380 L 89 396" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 89 480 L 89 496" marker-end="url(#ah)"/>
+
+  <!-- dispatch bus into the three lanes -->
+  <path class="arrow" d="M 170 550 L 183 550 L 183 125 L 196 125" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 183 270 L 196 270" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 183 400 L 196 400" marker-end="url(#ah)"/>
+
+  <!-- data paths -->
+  <path class="arrow" d="M 520 125 L 686 125" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <text class="s" x="548" y="118">straight to the banks</text>
+  <path class="arrow" d="M 520 270 L 546 270" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 520 520 L 546 520" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 358 440 L 358 456" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 660 250 L 686 250" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <path class="arrow" d="M 779 290 L 779 326" marker-end="url(#ah)"/>
 </svg>
-<figcaption>Module names deliberately parallel CUTE’s, because the intent is to reuse its structure:
-<code>TaskController</code>, the Omega shuffle fabric, the operand register file feeding a MAC
-array, <code>XSAICache</code> on the memory side, and difftest against a software model.</figcaption>
+<figcaption>The dense path is the one a CUTE-derived design gives you for free — <code>ABMatrixReg</code>
+becomes <code>OperatorReg</code>, <code>MatrixTE</code> and <code>ReducePE</code> become
+<code>ComplexMAC</code>, and <code>OmegaNetworkRouter</code> carries over almost unchanged, since a
+qubit stride <em>is</em> a bit permutation. The other two paths are what the measurements added, and
+they are the majority of the work: 39 of 65 blocks on the brickwork circuit never touch a MAC array,
+and the diagonal path never touches the shuffle fabric either. An engine sized for dense blocks alone
+would leave most of its area idle on real circuits.</figcaption>
 </figure>
 
 <div class="tablewrap">
@@ -615,6 +662,9 @@ array, <code>XSAICache</code> on the memory side, and difftest against a softwar
     <tr><td>XSAICache</td><td>same</td><td class="note">reusable as-is for n beyond on-chip</td></tr>
     <tr><td>CuteDifftest / CUTEFPE</td><td>Scotty</td><td class="note">golden model already exists and is tested</td></tr>
     <tr><td>—</td><td>FusionPass</td><td class="note">new, and it runs on the CPU — see stage 1</td></tr>
+    <tr><td>—</td><td>Phase path</td><td class="note">new: a phase table and one multiplier, no shuffle. 18/65 blocks</td></tr>
+    <tr><td>—</td><td>Permute path</td><td class="note">new: shuffle plus scaling, no MAC array. 21/65 blocks</td></tr>
+    <tr><td>—</td><td>FormDispatch</td><td class="note">new: routes each descriptor to one of the three</td></tr>
   </tbody>
 </table>
 </div>
@@ -717,10 +767,11 @@ point rather than an incidental one.</p>
   <li><strong>The exchange rate may never close.</strong> If an achievable MAC array cannot beat
   <span class="mono">8·2<sup>k</sup>/14k</span> flops per <span class="mono">k</span>× of bandwidth
   saved, there is no engine worth building. Stage 2 exists to answer this before any RTL.</li>
-  <li><strong>Three datapaths, not one — and the diagram above still shows one.</strong> The form
-  lattice settles what the engine has to serve: a phase path, a permutation path and a MAC array, in
-  roughly a 2:2:3 mix on the workloads measured so far. The area cost of the two cheap paths is not
-  yet estimated, and the block diagram has not been redrawn.</li>
+  <li><strong>The mix is measured on two workloads, not derived.</strong> The 2:2:3 split the
+  diagram is annotated with comes from a brickwork circuit and Grover. It is enough to establish that
+  the dense path is the minority — which is the architectural point — but not enough to size three
+  datapaths against each other. The area cost of the two cheap paths is still unestimated, and a
+  wider workload survey should come before anyone commits silicon to a ratio.</li>
   <li><strong>Bank conflicts.</strong> The Omega network is the right <em>kind</em> of fabric, but
   whether it resolves every stride without stalls is unproven here.</li>
   <li><strong>Operator construction on the critical path.</strong> Fusion costs
