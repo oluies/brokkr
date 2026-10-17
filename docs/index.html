@@ -173,7 +173,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: fusion pass landed, no RTL yet ·
+  <p class="meta">17 October 2026 · status: fusion pass and algorithm vectors landed, no RTL yet ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -332,6 +332,43 @@ multiply per amplitude unfused and a full dense block fused. A sparsity-aware pa
 diagonal blocks diagonal would cut the flop inflation substantially. And the fused kernel is a
 generic <span class="mono">d × d</span> loop against a hand-specialised 2×2 one; some of the gap is
 tuning, not physics.</p>
+
+<h3>Grover is the worst case, and it is instructive</h3>
+
+<p>Grover’s search is the obvious benchmark, so it is worth saying plainly that the greedy dense pass
+handles it <em>badly</em> — and why. Both the oracle and the diffusion operator contain a controlled
+<code>Z</code> over <em>every</em> qubit. That gate is diagonal: the unfused simulator applies it in
+one pass with a single sign flip per amplitude. Densified, it asks for a
+<span class="mono">4<sup>k</sup></span>-entry operator. At ten qubits that is a 16 MiB operator
+applied to a 16 KiB state:</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Grover on 10 qubits, 4 iterations (capped — the optimal count is 25), 186 gates.
+  <code>FusionBench grover 10 4</code>.</caption>
+  <thead><tr>
+    <th>width</th><th>blocks</th><th>flop/byte</th><th>flops</th><th>traffic</th>
+    <th>operator</th><th>ms</th><th>gate/s</th>
+  </tr></thead>
+  <tbody>
+    <tr class="hi"><td>none</td><td>186</td><td>0.50</td><td>1.0×</td><td>1.0×</td><td>—</td><td>8.9</td><td>20 821</td></tr>
+    <tr><td>2</td><td>97</td><td>0.51</td><td>1.0×</td><td>1.0×</td><td>16 MiB</td><td>76.7</td><td>2 426</td></tr>
+    <tr><td>4</td><td>54</td><td>0.53</td><td>1.0×</td><td>1.0×</td><td>16 MiB</td><td>27.3</td><td>6 819</td></tr>
+    <tr><td>6</td><td>42</td><td>0.59</td><td>1.2×</td><td>1.0×</td><td>16 MiB</td><td>31.0</td><td>5 994</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Intensity barely moves and the fused path is three to nine times slower, because one wide dense
+block applied to a single slice dominates everything. Past twelve qubits the pass cannot represent
+the circuit at all — there is a <code>MaxDenseWidth</code> guard that refuses rather than exhausting
+memory.</p>
+
+<p>The lesson is not that Grover is a bad benchmark. It is that <strong>a dense-only engine is the
+wrong engine</strong>. Diagonal operators — multi-controlled <code>Z</code>, <code>RZ</code>,
+<code>PHASE</code>, <code>CPHASE</code> — are a large fraction of real circuits and need a cheap
+path in both the fusion pass and the hardware: one multiplier and a phase table, not a MAC array.
+Any RTL that only does dense blocks would run Grover slower than the CPU it is attached to.</p>
 
 <h2><span class="num">05</span>The capacity ceiling</h2>
 
@@ -501,14 +538,21 @@ array, <code>XSAICache</code> on the memory side, and difftest against a softwar
   <ul>
     <li><strong>Done:</strong> greedy fusion pass over Scotty’s circuit IR; dense lowering of the
     whole gate set, mirroring the simulator’s own decompositions; <code>FusionCost</code> roofline
-    model; equivalence tests against the unfused simulator including randomised circuits;
-    <code>FusionBench</code>.</li>
-    <li><strong>Next:</strong> sparsity-aware fusion — keep diagonal and permutation blocks in their
-    cheap form instead of densifying them. This is the single largest remaining lever on the flop
-    inflation.</li>
+    model; <code>FusedKernel</code> split out with no parallel-collections dependency so the path can
+    be linked by Scala.js; equivalence tests against the unfused simulator across the gate set and
+    randomised circuits; <code>FusionBench</code>. 197 tests pass.</li>
+    <li><strong>Done:</strong> <code>scotty.algorithm</code> — a QFT checked against an explicitly
+    constructed DFT matrix, Grover, and Shor’s period finding for 15 with the standard hand-compiled
+    modular exponentiation. These are the difftest vectors for every later stage, and they are
+    checked for the <em>answer</em>, not just for agreement.</li>
+    <li><strong>Next, and now the clear priority:</strong> sparsity-aware lowering. Keep diagonal and
+    permutation gates in their cheap form instead of densifying them. The Grover numbers above make
+    this the single largest lever, and it changes the hardware requirement too.</li>
     <li>Commutation-aware and look-ahead placement policies, measured against greedy.</li>
-    <li>Grover and Shor as standard workloads, in Scala and Scala.js, doubling as the difftest
-    vectors for every later stage.</li>
+    <li>A Scala.js path for the simulator. The algorithms are platform-neutral, but
+    <code>QuantumSimulator</code> imports <code>scala.collection.parallel</code>, which is JVM-only —
+    which is why <code>pctc</code>’s browser build compiles only the density-matrix sources. The
+    fusion kernel is already clear of it; the simulator needs a sequential path or a cross-build.</li>
   </ul>
 </div>
 
@@ -560,10 +604,12 @@ point rather than an incidental one.</p>
   the amplitude index; local bit <span class="mono">j</span> of a block operator is global qubit
   <span class="mono">qubits(j)</span>. There is a characterisation test for this, because every dense
   operator in the pass is transposed into the wrong basis if it ever flips.</li>
-  <li><strong>Algorithm-level vectors.</strong> Grover and Shor give end-to-end checks with
-  <em>known answers</em> — a marked amplitude that must approach 1, a period that must come back as
-  4 — rather than amplitude diffs alone. That is what makes them worth having as the difftest
-  payload.</li>
+  <li><strong>Algorithm-level vectors, which now exist.</strong> Grover and Shor give end-to-end
+  checks with <em>known answers</em> — a marked amplitude that must approach 1, a period that must
+  come back as 4, a factorisation that must be 3 × 5 — rather than amplitude diffs alone. A diff only
+  tells you two implementations agree; these tell you the implementation is right. Both are asserted
+  at every fusion width, so a pass that preserved norm and phase relationships but broke the
+  algorithm would still be caught.</li>
   <li><strong>Scala 2.13 consuming Scala 3.</strong> CUTE already sets <code>-Ytasty-reader</code>,
   which in principle lets Chisel code use Scotty’s jar directly. <em>Verify before relying on
   it</em> — tasty-reader support is partial and Scotty is on 3.9 LTS. The fallback is a trace dumped
@@ -577,6 +623,10 @@ point rather than an incidental one.</p>
   <li><strong>The exchange rate may never close.</strong> If an achievable MAC array cannot beat
   <span class="mono">8·2<sup>k</sup>/14k</span> flops per <span class="mono">k</span>× of bandwidth
   saved, there is no engine worth building. Stage 2 exists to answer this before any RTL.</li>
+  <li><strong>A dense-only datapath is not enough.</strong> The Grover measurement is the evidence:
+  diagonal operators are common and nearly free, and an engine that can only do dense blocks loses to
+  the CPU on them. The architecture needs a phase path alongside the MAC array, which is not in the
+  diagram above yet because the cost of it is not yet estimated.</li>
   <li><strong>Bank conflicts.</strong> The Omega network is the right <em>kind</em> of fabric, but
   whether it resolves every stride without stalls is unproven here.</li>
   <li><strong>Operator construction on the critical path.</strong> Fusion costs

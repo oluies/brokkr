@@ -50,3 +50,32 @@ array with a banked scratchpad is the opposite, which is the actual case for the
 The first version of the kernel allocated its gather buffers per slice — a quarter of a million
 allocations per block at width 4 on 22 qubits — and was about 4× slower at width 6 than the chunked
 version measured above. Worth remembering before reading any future regression as a finding.
+
+## Addendum: Grover, and why dense-only is the wrong engine
+
+Grover on 10 qubits, 4 iterations (capped; optimal is 25), 186 gates,
+`FusionBench grover 10 4`:
+
+```
+width  blocks  flop/byte    flops  traffic  operator       ms   gate/s
+ none     186       0.50     1.0x     1.0x         -      8.9    20821
+    2      97       0.51     1.0x     1.0x    16 MiB     76.7     2426
+    3      68       0.52     1.0x     1.0x    16 MiB     33.2     5607
+    4      54       0.53     1.0x     1.0x    16 MiB     27.3     6819
+    5      46       0.56     1.1x     1.0x    16 MiB     27.8     6701
+    6      42       0.59     1.2x     1.0x    16 MiB     31.0     5994
+```
+
+Intensity barely moves and the fused path is 3-9x slower. The cause is that Grover's oracle and
+diffusion operator both contain a controlled `Z` over *every* qubit. That gate is diagonal — one
+sign flip per amplitude unfused — and densifying it produces a 16 MiB operator applied to a 16 KiB
+state. Past 12 qubits the pass cannot represent the circuit at all; `FusedBlock.MaxDenseWidth`
+refuses rather than exhausting memory.
+
+Two conclusions, and the second is the one that matters for the architecture:
+
+1. Sparsity-aware lowering is now the clear priority, not a nice-to-have.
+2. A dense-only datapath is the wrong engine. Diagonal operators (multi-controlled `Z`, `RZ`,
+   `PHASE`, `CPHASE`) are a large fraction of real circuits and want one multiplier and a phase
+   table, not a MAC array. RTL that only does dense blocks would run Grover slower than the CPU it
+   hangs off.

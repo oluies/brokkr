@@ -40,11 +40,14 @@ See the [assessment](https://oluies.github.io/brokkr/) for the numbers, the capa
 
 ## Reproducing the measurements
 
+The fusion pass and the algorithm vectors live in
+[Scotty](https://github.com/oluies/scotty) under `scotty.simulator.fusion` and
+`scotty.algorithm`. From that checkout:
+
 ```bash
-git clone -b pctc https://github.com/oluies/scotty.git
-cd scotty
-sbt 'Test/runMain scotty.simulator.fusion.FusionBench 22'
-sbt 'testOnly scotty.simulator.fusion.GateFusionSpec'
+sbt test                                                    # 197 tests
+sbt 'Test/runMain scotty.simulator.fusion.FusionBench 22'    # brickwork, 22 qubits
+sbt 'Test/runMain scotty.simulator.fusion.FusionBench grover 10 4'
 ```
 
 ## Related
