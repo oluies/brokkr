@@ -157,10 +157,29 @@ That is the number to design against.
 
 Three remaining questions, two of which need arithmetic rather than simulation.
 
-**The request network buys almost nothing.** Removing head-of-line blocking entirely lands within a
-few percent of a single global issue port, in both directions; adding the one request port per bank
-a real network would have costs about 15%. That closeness is the result — a mapping sending a whole
-slice to one bank is *starved, not blocked*, and no interconnect fixes a bank nobody asks for.
+**The request network buys a great deal** — the opposite of what this README said before; see
+below. With genuine per-bank request queues, fed in stream order so a backlog at one bank occupies
+nothing another needs:
+
+| mapping | blocked | d=4 | d=16 | d=64 | d=256 | ceiling |
+|---|---|---|---|---|---|---|
+| low bits | 1.0 | 1.1 | 1.3 | **28.5** | 28.5 | 32 |
+| xor fold | 1.0 | 5.3 | 25.6 | 31.1 | 31.1 | 32 |
+| distinct | 1.0 | 9.6 | 15.9 | 15.9 | 15.9 | 32 |
+| ext. Hamming | 1.0 | 18.2 | **30.2** | 31.4 | 31.4 | 32 |
+
+The shape is the burst length. A slice sends all `2^k` accesses — 64 here — to however many banks
+the mapping spreads it across, and the generator can only move to the next slice once the current
+one fits in queues. **Low bits needs a queue the size of a whole slice** before it overlaps slices
+at all; a mapping that spreads needs a quarter of that.
+
+So once the queues are right the mapping is not worth bandwidth — both reach the high twenties — it
+is worth **queue depth**, 16 against 64, across all 32 banks.
+
+*Correction:* an earlier version reported that a request network buys almost nothing. The
+experiment behind it was not an experiment: the "no head-of-line blocking" configuration kept the
+same single bounded window as its baseline, so a backlog at one bank still consumed slots other
+banks needed. The two were nearly the same model and their agreement was a tautology.
 
 **Operator traffic is not in contention.** A block loads its operator once and streams the whole
 state past it. A dense `4^k` operator against `2^n` amplitudes is 0.39% of traffic at n=20, k=6 and
@@ -168,7 +187,8 @@ state past it. A dense `4^k` operator against `2^n` amplitudes is 0.39% of traff
 (50% at n=12), which is the regime with nothing to accelerate.
 
 **Writeback halves everything, and need not.** Each amplitude is written back to the same address,
-hence the same bank, so traffic doubles with an identical distribution and every figure halves. But
+hence the same bank, so traffic doubles with an identical distribution — extended Hamming goes
+31.4 → 15.7. But
 the write targets the address the read just used, so a read-modify-write memory recovers the whole
 factor of two — a memory feature, not an arbiter one, and the largest lever left in the memory
 path.

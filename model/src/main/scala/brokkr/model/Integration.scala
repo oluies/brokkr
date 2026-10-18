@@ -10,57 +10,53 @@ import scala.collection.mutable
   * knowing before building a model for them.
   */
 object Integration:
-  /** Bandwidth with a per-bank request network instead of one global issue port.
+  /** Bandwidth with genuine per-bank request queues.
     *
-    * [[Arbiter]] issued from a single port that scanned a window, so a request to a full queue
-    * stalled everything behind it — head-of-line blocking. A real design routes requests to
-    * per-bank queues through a network, and then each bank takes its own pending requests
-    * independently and no bank can block another.
+    * An earlier version of this model claimed to remove head-of-line blocking and did not. It kept
+    * a single shared pending buffer, so a backlog at one bank still consumed slots every other bank
+    * needed — the same constraint as the baseline it was compared against. The two were nearly
+    * identical by construction and their agreement was not evidence about interconnects.
     *
-    * `portsPerBank` is how many requests a bank may accept in a cycle. Setting it to the queue
-    * depth isolates the absence of head-of-line blocking; setting it to 1 adds the constraint a
-    * real single-ported request network would impose, which is a separate question. Neither
-    * configuration strictly bounds the global port, since the two also differ in how the issue
-    * window advances within a cycle — but they bracket it closely enough to show that blocking is
-    * not the binding constraint.
+    * Here each bank has its own queue, `depth` entries, fed in stream order. A request to a full
+    * bank stalls the generator, which is real backpressure rather than an artifact, but a backlog
+    * at one bank no longer occupies anything another bank could have used.
+    *
+    * That makes the queue depth the interesting parameter. A slice sends all `2^k` of its accesses
+    * to however many banks the mapping spreads it over, so for a mapping that concentrates, the
+    * generator can only move on to the next slice once the current one fits in a queue.
     */
-  def perBankBandwidth(
+  def perBankQueues(
       mapping: Mapping,
       support: Seq[Int],
       slices: Int,
-      queueDepth: Int,
-      window: Int,
-      portsPerBank: Int
+      depth: Int,
+      issueWidth: Int
   ): Double =
+    require(depth >= 1 && issueWidth >= 1, "a queue and an issue port are both needed")
+
     val requests = Arbiter.stream(mapping, support, slices)
-    val occupancy = new Array[Int](mapping.banks)
-    val pending = mutable.ArrayBuffer.empty[Int]
+    val queued = new Array[Int](mapping.banks)
     var next = 0
     var served = 0L
     var cycles = 0L
 
     while served < requests.length do
       (0 until mapping.banks).foreach: bank =>
-        if occupancy(bank) > 0 then
-          occupancy(bank) -= 1
+        if queued(bank) > 0 then
+          queued(bank) -= 1
           served += 1
 
-      while pending.length < window && next < requests.length do
-        pending += requests(next)
-        next += 1
+      // In-order generation. It stalls on a full target bank, which is backpressure that a real
+      // network also has; what it no longer does is block on a bank other than its own target.
+      var issued = 0
+      var stalled = false
 
-      // Every bank takes its own pending requests. No bank can block another.
-      (0 until mapping.banks).foreach: bank =>
-        var taken = 0
-
-        while taken < portsPerBank && occupancy(bank) < queueDepth && pending.contains(bank) do
-          pending.remove(pending.indexOf(bank))
-          occupancy(bank) += 1
-          taken += 1
-
-          while pending.length < window && next < requests.length do
-            pending += requests(next)
-            next += 1
+      while !stalled && issued < issueWidth && next < requests.length do
+        if queued(requests(next)) < depth then
+          queued(requests(next)) += 1
+          next += 1
+          issued += 1
+        else stalled = true
 
       cycles += 1
 
@@ -79,29 +75,36 @@ object Integration:
       extendedHamming(qubitCount, bankBits)
     )
 
-    println("== 1. A per-bank request network against one global issue port ==")
+    println("== 1. Per-bank request queues ==")
     println()
-    println(s"$qubitCount qubits, $banks banks, width-$width blocks, queue depth 4, window 32.")
+    println(s"$qubitCount qubits, $banks banks, width-$width blocks, issue width $banks.")
+    println("Each bank has its own queue of the given depth, fed in stream order. The baseline is")
+    println("the shared-window arbiter at lookahead 1, which is the configuration that genuinely")
+    println("blocks: one request at the head, and if its bank is full nothing else moves.")
     println()
-    println(f"${"mapping"}%-14s${"global port"}%13s${"no HOL"}%9s${"1 port/bank"}%13s${"ceiling"}%9s")
+    println(f"${"mapping"}%-14s${"blocked"}%9s" + Seq(4, 16, 64, 256).map(d => f"${s"d=$d"}%9s").mkString + f"${"ceiling"}%9s")
 
-    mappings.foreach: mapping =>
+    val perBank = mappings.map: mapping =>
       val support = Schedule.worstSupport(mapping, qubitCount, width)
-      val global = Arbiter.bandwidth(mapping, support, slices, 4, banks, 32)
-      val unblocked = perBankBandwidth(mapping, support, slices, 4, 32, portsPerBank = 4)
-      val singlePort = perBankBandwidth(mapping, support, slices, 4, 32, portsPerBank = 1)
+      val blocked = Arbiter.bandwidth(mapping, support, slices, 4, banks, 1)
+      val depths = Seq(4, 16, 64, 256).map(perBankQueues(mapping, support, slices, _, banks))
 
-      println(f"${mapping.name}%-14s$global%13.1f$unblocked%9.1f$singlePort%13.1f$banks%9d")
+      println(
+        f"${mapping.name}%-14s$blocked%9.1f" + depths.map(b => f"$b%9.1f").mkString + f"$banks%9d"
+      )
+
+      mapping -> (support, depths.last)
 
     println()
-    println("The middle column has no head-of-line blocking. It lands within a few percent of the")
-    println("global port in both directions — the two also differ in how the window advances, so")
-    println("neither bounds the other — and that closeness is the result: blocking is not what was")
-    println("costing bandwidth. A mapping that sends a whole slice to one bank is *starved*, not")
-    println("blocked. There is nothing for the other banks to accept, and no network fixes that.")
+    println(s"A slice sends all ${1 << width} of its accesses to however many banks the mapping")
+    println("spreads it over, so the generator can only move on to the next slice once the current")
+    println("one fits. That is why depth matters and why it matters most to the mapping that")
+    println("concentrates: low bits needs a queue the size of a whole slice before it overlaps")
+    println("slices at all, while a mapping that spreads needs almost nothing.")
     println()
-    println("The last column adds a single request port per bank, which a real network would have.")
-    println("That constraint costs more than the blocking it replaces.")
+    println("This supersedes an earlier version of this section, which compared two configurations")
+    println("that shared one bounded window and were therefore nearly the same model. It reported")
+    println("that a request network buys almost nothing. The numbers above say otherwise.")
     println()
 
     println("== 2. Operator traffic against amplitude traffic ==")
@@ -132,9 +135,8 @@ object Integration:
     println()
     println(f"${"mapping"}%-14s${"read only"}%11s${"read+write"}%12s${"RMW"}%8s")
 
-    mappings.foreach: mapping =>
-      val support = Schedule.worstSupport(mapping, qubitCount, width)
-      val read = perBankBandwidth(mapping, support, slices, 4, 32, portsPerBank = 4)
+    perBank.foreach: (mapping, result) =>
+      val read = result._2
 
       println(f"${mapping.name}%-14s$read%11.1f${read / 2}%12.1f$read%8.1f")
 

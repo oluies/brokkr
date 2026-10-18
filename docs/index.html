@@ -977,27 +977,52 @@ would leave most of its area idle on real circuits.</figcaption>
   contention between operator loads and amplitude traffic, and the writeback path. Two of them turn
   out to need arithmetic rather than simulation.</p>
 
-  <p><strong>The request network buys almost nothing.</strong> Removing head-of-line blocking
-  entirely — every bank taking its own pending requests, no bank able to block another — lands
-  within a few percent of the single global port, in both directions. Adding the single request
-  port per bank that a real network would have costs about 15%.</p>
+  <p><strong>The request network buys a great deal</strong> — which is the opposite of what an
+  earlier version of this page said, and the correction is explained below. Giving each bank its own
+  request queue, fed in stream order, so that a backlog at one bank occupies nothing another bank
+  needs:</p>
 
 <div class="tablewrap">
-<table class="narrow">
-  <caption>Accesses per cycle, 32 banks, queue depth 4, window 32, worst support.</caption>
-  <thead><tr><th>mapping</th><th>global port</th><th>no blocking</th><th>1 port/bank</th></tr></thead>
+<table>
+  <caption>Accesses per cycle against per-bank queue depth, 32 banks, width-6 blocks, issue width
+  32. “blocked” is the shared-window arbiter at lookahead 1 — the configuration that genuinely
+  blocks, since one request sits at the head and nothing moves if its bank is full.</caption>
+  <thead><tr>
+    <th>mapping</th><th>blocked</th><th>d=4</th><th>d=16</th><th>d=64</th><th>d=256</th><th>ceiling</th>
+  </tr></thead>
   <tbody>
-    <tr><td>low bits</td><td>2.1</td><td>2.1</td><td>2.0</td></tr>
-    <tr><td>xor fold</td><td>9.5</td><td>9.9</td><td>7.4</td></tr>
-    <tr class="hi"><td>ext. Hamming</td><td>19.1</td><td>19.6</td><td>17.0</td></tr>
+    <tr><td>low bits</td><td>1.0</td><td>1.1</td><td>1.3</td><td><strong>28.5</strong></td><td>28.5</td><td>32</td></tr>
+    <tr><td>xor fold</td><td>1.0</td><td>5.3</td><td>25.6</td><td>31.1</td><td>31.1</td><td>32</td></tr>
+    <tr><td>distinct</td><td>1.0</td><td>9.6</td><td>15.9</td><td>15.9</td><td>15.9</td><td>32</td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td>1.0</td><td>18.2</td><td><strong>30.2</strong></td><td>31.4</td><td>31.4</td><td>32</td></tr>
   </tbody>
 </table>
 </div>
 
-  <p>That closeness <em>is</em> the result. Head-of-line blocking is not what was costing bandwidth:
-  a mapping that sends a whole slice to one bank is <strong>starved, not blocked</strong>. There is
-  nothing for the other banks to accept, and no amount of network fixes a bank nobody is asking for.
-  The interconnect is not where this design's difficulty lives.</p>
+  <p>The shape of it is the burst length. A slice sends all
+  <span class="mono">2<sup>k</sup></span> of its accesses — 64 here — to however many banks the
+  mapping spreads it across, and the generator can only move on to the next slice once the current
+  one fits in queues. So <strong>low bits needs a queue the size of a whole slice</strong> before it
+  overlaps slices at all: 1.3 at depth 16, then 28.5 at depth 64. A mapping that spreads needs far
+  less, reaching 30.2 at depth 16.</p>
+
+  <div class="verdict">
+    <span class="label cool">What the mapping is actually worth</span>
+    <p>Not bandwidth, once the queues are right — both reach the high twenties. It is worth
+    <strong>queue depth</strong>: 16 against 64, a factor of four in the request buffers, for the
+    same result. That is a real and sizeable cost, since the queues are per bank and there are
+    thirty-two of them, but it is a different claim from the one this section used to make.</p>
+  </div>
+
+  <div class="verdict">
+    <span class="label">What this section said yesterday</span>
+    <p>It said a request network buys almost nothing and that the interconnect is not where the
+    difficulty lives. <strong>That was wrong, and the experiment behind it was not an experiment.</strong>
+    The configuration labelled “no head-of-line blocking” kept the same single bounded window as the
+    baseline it was compared against, so a backlog at one bank still consumed slots every other bank
+    needed. The two were nearly the same model, and their agreement within a few percent was a
+    tautology rather than a finding. The table above uses genuine per-bank queues.</p>
+  </div>
 
   <p><strong>Operator traffic is not in contention.</strong> A block loads its operator once and
   then streams the entire state past it, so the only question is whether the load amortises, and the
@@ -1010,10 +1035,10 @@ would leave most of its area idle on real circuits.</figcaption>
 
   <p><strong>Writeback halves everything, and need not.</strong> Every amplitude read is transformed
   and written back to the same address, hence the same bank, so the traffic doubles while its
-  distribution stays identical — the bank histogram does not change at all, and every figure above
-  halves. But the write has the same address as the read that preceded it, so a memory supporting
-  read-modify-write recovers the whole factor of two. That is a memory feature rather than an
-  arbiter one, and it is the single largest lever left in the memory path.</p>
+  distribution stays identical — the bank histogram does not change at all. Extended Hamming goes
+  from 31.4 to 15.7. But the write has the same address as the read that preceded it, so a memory
+  supporting read-modify-write recovers the whole factor of two. That is a memory feature rather
+  than an arbiter one, and it is the single largest lever left in the memory path.</p>
 
   <p>What is genuinely not modelled now: refill from a level below when the state does not fit on
   chip, and the CPU-side cost of computing fusion, Benes routing and bank descriptors per block.
@@ -1128,9 +1153,11 @@ point rather than an incidental one.</p>
   permutation is usually arbitrary and needs a Benes network, which costs 1.4% of its datapath. The
   memory-side question is settled by stage 2: at a realistic issue window the bank mapping is worth
   9× in bandwidth, 2.1 accesses per cycle against 19.1 of a possible 32, and
-  the interconnect around it turns out not to matter much — the failure mode is starvation rather
-  than blocking. What is not modelled is refill from a level below when the state does not fit on
-  chip, and the CPU-side cost of preparing each block's descriptors.</li>
+  the interconnect around it matters a great deal: with genuine per-bank request queues the depth
+  must reach the slice burst length before a concentrating mapping overlaps slices at all, so the
+  mapping is worth a factor of four in queue depth rather than in bandwidth. What is not modelled is
+  refill from a level below when the state does not fit on chip, and the CPU-side cost of preparing
+  each block's descriptors.</li>
   <li><strong>A bank mapping has to be checked for coverage, not only for conflicts.</strong> One of
   the candidates reaches only half the banks for some supports, capping bandwidth at 50% however
   deep the queue, and the per-slice model rated it among the better ones. The two properties are

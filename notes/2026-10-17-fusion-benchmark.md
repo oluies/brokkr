@@ -561,3 +561,44 @@ The address model was copied into four places and is now one helper in `BankConf
 guards against degenerate arguments that previously hung it; and the "worst support" caption now
 says it is the worst per-slice conflict count rather than the worst bandwidth, which are different
 and were being conflated.
+
+## Addendum 10: the request network, measured properly
+
+Addendum 8 reported that a per-bank request network buys almost nothing, and that the interconnect
+is not where this design's difficulty lives. **Both are wrong**, and the experiment behind them was
+not an experiment.
+
+The configuration labelled "no head-of-line blocking" kept the same single bounded window as the
+baseline it was compared against, so a backlog at one bank still consumed slots that every other
+bank needed. The two models were nearly identical by construction; their agreement within a few
+percent was a tautology. A review caught it.
+
+### With genuine per-bank queues
+
+Each bank with its own queue, fed in stream order, so a backlog occupies nothing another bank needs.
+The baseline is the shared-window arbiter at lookahead 1, which is the configuration that actually
+blocks:
+
+```
+mapping         blocked      d=4     d=16     d=64    d=256  ceiling
+low bits            1.0      1.1      1.3     28.5     28.5       32
+xor fold            1.0      5.3     25.6     31.1     31.1       32
+distinct            1.0      9.6     15.9     15.9     15.9       32
+ext. Hamming        1.0     18.2     30.2     31.4     31.4       32
+```
+
+The shape is the burst length. A slice sends all `2^k` of its accesses — 64 here — to however many
+banks the mapping spreads it across, and the generator can only move on once the current slice fits
+in queues. **Low bits needs a queue the size of a whole slice** before it overlaps slices at all:
+1.3 at depth 16, 28.5 at depth 64.
+
+### What the mapping is actually worth
+
+Not bandwidth, once the queues are right: both reach the high twenties. It is worth **queue depth**,
+16 against 64 — a factor of four in request buffers, across all 32 banks. That is a real cost, and a
+different claim from the one addendum 8 made.
+
+### Writeback, restated on the corrected numbers
+
+Extended Hamming goes 31.4 read-only to 15.7 with writeback, and back to 31.4 with a
+read-modify-write memory.
