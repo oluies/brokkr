@@ -29,7 +29,7 @@ object vectors extends ScalaModule {
 object rtl extends ScalaModule {
   def scalaVersion = "2.13.15"
 
-  def chiselVersion = "6.7.0"
+  def chiselVersion = "7.0.0-RC1"
 
   def scalacOptions = Seq(
     "-deprecation",
@@ -38,6 +38,13 @@ object rtl extends ScalaModule {
     "-language:reflectiveCalls",
     "-Ymacro-annotations"
   )
+
+  // Chisel 7 rather than the 6.7.0 CUTE pins, because ChiselSim — Chisel's own simulation API —
+  // does not work on 6.7.0 with Verilator 5.052, desynchronising with "Unexpected message: Ready"
+  // on the first clock edge, while on 7 it works. chiseltest, the alternative, stopped at 6.0.0 and
+  // its Verilator backend fails to compile its own C++ harness against Verilator 5. Reusing CUTE's
+  // modules later will mean matching whatever Chisel it is on then; until there is a module to
+  // reuse, a working simulator is worth more.
 
   def mvnDeps = Seq(mvn"org.chipsalliance::chisel:$chiselVersion")
 
@@ -48,8 +55,7 @@ object rtl extends ScalaModule {
 
   object test extends ScalaTests with TestModule.ScalaTest {
     def mvnDeps = Seq(
-      mvn"org.scalatest::scalatest:3.2.20",
-      mvn"edu.berkeley.cs::chiseltest:6.0.0"
+      mvn"org.scalatest::scalatest:3.2.20"
     )
 
     def sources = Task.Sources(moduleDir / os.up / "src" / "test" / "scala")
@@ -57,3 +63,4 @@ object rtl extends ScalaModule {
     def resources = Task.Sources(moduleDir / os.up / "src" / "test" / "resources")
   }
 }
+

@@ -1,7 +1,7 @@
 package brokkr
 
 import chisel3._
-import chiseltest._
+import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.io.Source
 
@@ -12,11 +12,11 @@ import scala.io.Source
   * the interesting question is whether the error grows with the width. It does not much: the
   * accumulation is widened, so the only rounding in a row is the final shift.
   */
-class DenseKernelSpec extends AnyFlatSpec with ChiselScalatestTester {
+class DenseKernelSpec extends AnyFlatSpec with ChiselSim {
   val Width = 3
   val Dimension = 1 << Width
   val DataWidth = 24
-  val FractionBits = DataWidth - 1
+  val FractionBits = DataWidth - 2
   val Scale = BigDecimal(BigInt(1) << FractionBits)
 
   case class Sample(index: Int, inRe: Double, inIm: Double, outRe: Double, outIm: Double)
@@ -87,7 +87,7 @@ class DenseKernelSpec extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "implement its fixed-point arithmetic exactly" in {
-    test(new DenseKernel(Width, DataWidth)) { dut =>
+    simulate(new DenseKernel(Width, DataWidth)) { dut =>
       load(dut)
 
       (0 until Dimension).foreach { row =>
@@ -106,7 +106,7 @@ class DenseKernelSpec extends AnyFlatSpec with ChiselScalatestTester {
   it should "stay close to Scotty's double-precision result" in {
     var worst = 0.0
 
-    test(new DenseKernel(Width, DataWidth)) { dut =>
+    simulate(new DenseKernel(Width, DataWidth)) { dut =>
       load(dut)
 
       (0 until Dimension).foreach { row =>

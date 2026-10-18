@@ -9,12 +9,13 @@ A design assessment, and eventually an implementation, of a
 
 ## Status
 
-Three blocks of RTL exist. The engine does not. What is here:
+All three datapaths exist as RTL. The engine does not. What is here:
 
 - the design assessment in `docs/`, published to GitHub Pages;
 - the measurement record in `notes/`;
-- `rtl/` — Chisel: `AddressGen` (slice addressing), `DiagonalKernel` (the phase datapath) and
-  `DenseKernel` (the MAC array), each verified against Scotty;
+- `rtl/` — Chisel: `AddressGen` (slice addressing), `DiagonalKernel` (phase path),
+  `MonomialKernel` (permute path, with a Benes network) and `DenseKernel` (MAC array), each
+  verified against Scotty under Verilator;
 - `vectors/` — the Scala 3 generator that produces golden vectors from Scotty.
 
 The gate-fusion pass that motivated all of it lives in
@@ -30,25 +31,47 @@ scripts/area.sh DenseKernel                          # synthesise with Yosys, re
 scripts/verilate.sh DenseKernel                      # simulate the netlist under Verilator
 ```
 
-The tests need no HDL toolchain: `chiseltest` interprets on the JVM and firtool is fetched as an
-ordinary dependency. `area.sh` needs Yosys and `verilate.sh` needs Verilator.
+`area.sh` needs Yosys; the tests and `verilate.sh` need Verilator. firtool arrives as an ordinary
+Maven dependency.
 
-Note that Verilator is driven by a SystemVerilog testbench rather than through Chisel. As of Chisel
-6.7.0 neither `chiseltest`'s Verilator backend nor ChiselSim's svsim works with Verilator 5.052 —
-the first fails to compile its harness with `unknown type name 'WData'`, the second desynchronises
-with `Unexpected message: Ready` on the first clock edge.
+Tests run under Verilator through **ChiselSim**, which needs Chisel 7: on 6.7.0 (the version CUTE
+pins) ChiselSim's svsim desynchronises with `Unexpected message: Ready` on the first clock edge
+against Verilator 5.052, and `chiseltest` — which stopped at 6.0.0 — fails to compile its own C++
+harness with `unknown type name 'WData'`. On Chisel 7.0.0-RC1 it works.
+
+A SystemVerilog testbench driving Verilator through `$readmemh` is kept alongside for the dense
+kernel, since testing the *generated netlist* with the toolchain an FPGA bring-up would use is a
+slightly different question from testing the elaborated design.
 
 ### What it costs in silicon
 
-| module | cells | flops | vs diagonal |
+| module | cells | amplitudes/cycle | cells per amplitude/cycle |
 |---|---|---|---|
-| `AddressGen` | 79 | 0 | — |
-| `DiagonalKernel` | 21 112 | 433 | 1.0× |
-| `DenseKernel` | 172 195 | 3 121 | **8.2×** |
+| `AddressGen` | 79 | — | — |
+| `BenesOnly` | 2 304 | — | — |
+| `DiagonalKernel` | 20 775 | 1 | 20 775 |
+| `MonomialKernel` | 159 287 | 8 | **19 910** |
+| `DenseKernel` | 169 577 | 1 | **169 577** |
 
-Same width (k=3) and format (Q1.23), so this compares datapaths rather than differently sized
-designs. The ratio is `2^k` in both multipliers and storage, so it widens with the fusion width —
-at k=6 the dense path would cost around 64× the diagonal one.
+Same width (k=3) and format, so this compares datapaths. Three things fall out:
+
+- **the permute path costs what the phase path costs** — within 4% per unit throughput;
+- **the dense path costs 8.5× either**, which is `2^k` as predicted, so the gap widens with the
+  fusion width: around 64× at k=6;
+- **the shuffle fabric is 1.4% of the permute path**. The thing that looked like the architectural
+  risk is a rounding error next to the multipliers.
+
+### Why a Benes network, not an Omega network
+
+`PermutationStudy` fuses randomised circuits and classifies the permutations monomial blocks
+contain: 7.7% are bit permutations, 33.5% are affine over GF(2), and **58.8% are arbitrary** —
+Toffoli and Fredkin generate permutations that are not affine. An Omega network is blocking and
+routes bit permutations natively, so it could not serve most blocks. A Benes network routes every
+permutation in `(2k-1) * 2^(k-1)` switches, with settings computed by the host once per block.
+
+Note this is a different shuffle from the memory-side one. Moving amplitudes between lanes and banks
+*is* a bit permutation, set by the qubit support, and an Omega network suits it. Routing the
+operator's own permutation is not.
 
 Regenerating the golden vectors needs Scotty published locally — **both** to Ivy and to M2, since
 Mill resolves a `SNAPSHOT` from `~/.ivy2/local` first and a stale copy there will silently shadow a

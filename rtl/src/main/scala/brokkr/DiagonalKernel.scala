@@ -22,10 +22,9 @@ import chisel3.util._
   * checks the RTL against an exact integer model of this arithmetic, and separately checks how far
   * that model drifts from Scotty's doubles.
   *
-  * The product of two Q1.f numbers is Q2.2f, so it is shifted right by `fractionBits` and truncated
+  * The product of two Q2.f numbers is Q4.2f, so it is shifted right by `fractionBits` and truncated
   * — truncated, not rounded, because that is one gate cheaper and the error is already bounded well
-  * below what the format costs. Both factors are at most 1 in magnitude, so the product cannot
-  * overflow the format except at exactly 1.0.
+  * below what the format costs. An amplitude is at most 1 and a unitary entry at most 1, so the product fits.
   *
   * @param qubitCount how many qubits the register has, and so how wide an amplitude index is
   * @param maxWidth   the widest block support this kernel serves
@@ -41,7 +40,17 @@ class DiagonalKernel(val qubitCount: Int, val maxWidth: Int, val dataWidth: Int)
   val tableDepth: Int = 1 << maxWidth
 
   /** Q1.`fractionBits`: a stored integer `x` means `x / 2^fractionBits`. */
-  val fractionBits: Int = dataWidth - 1
+  /** Q2.`fractionBits`: a stored integer `x` means `x / 2^fractionBits`, so the range is
+    * `[-2, 2)`.
+    *
+    * Two integer bits rather than one, which costs a bit of precision and buys correctness. A
+    * unitary operator has entries of exactly ±1 all over it — every `X`, `CNOT`, `SWAP` and Toffoli
+    * is a permutation matrix of them — and `1.0` is not representable in Q1.f, where the range stops
+    * at `1 - 2^-f`. It wraps to `-1.0`, silently flipping the sign of the most common coefficient
+    * there is. Amplitudes never need the extra range, but sharing one format keeps a single shift
+    * in the datapath.
+    */
+  val fractionBits: Int = dataWidth - 2
 
   val io = IO(new Bundle {
     /** The block's support, ascending. Entries at or past `blockWidth` are ignored. */

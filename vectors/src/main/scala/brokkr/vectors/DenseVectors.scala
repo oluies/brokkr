@@ -77,7 +77,7 @@ object DenseVectors:
     println(s"wrote a ${amplitudes}x$amplitudes dense operator and $amplitudes amplitudes to $path")
     println(s"wrote dense-operator.hex, dense-input.hex and dense-expected.hex beside it")
 
-  val FractionBits: Int = 23
+  val FractionBits: Int = 22
 
   def fixed(value: Double): BigInt =
     BigDecimal(value).*(BigDecimal(BigInt(1) << FractionBits)).setScale(0, BigDecimal.RoundingMode.HALF_UP).toBigInt

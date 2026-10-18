@@ -1,7 +1,7 @@
 package brokkr
 
 import chisel3._
-import chiseltest._
+import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.io.Source
 
@@ -12,7 +12,7 @@ import scala.io.Source
   * call each other. The vectors are exhaustive rather than sampled — at six qubits and supports up
   * to three wide there are only 592 of them, so there is no reason to settle for less.
   */
-class AddressGenSpec extends AnyFlatSpec with ChiselScalatestTester {
+class AddressGenSpec extends AnyFlatSpec with ChiselSim {
   case class Vector(slice: Int, qubits: Seq[Int], base: Int)
 
   lazy val vectors: Seq[Vector] = {
@@ -35,7 +35,7 @@ class AddressGenSpec extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "match Scotty's baseOf on every vector" in {
-    test(new AddressGen(QubitCount, MaxWidth)) { dut =>
+    simulate(new AddressGen(QubitCount, MaxWidth)) { dut =>
       vectors.foreach { v =>
         dut.io.slice.poke(v.slice.U)
         dut.io.blockWidth.poke(v.qubits.length.U)
@@ -54,7 +54,7 @@ class AddressGenSpec extends AnyFlatSpec with ChiselScalatestTester {
   it should "leave the supported bits clear" in {
     // The defining property, checked independently of the vectors: a base address never has a bit
     // set at a supported qubit, because that is the bit the block's own offsets will fill in.
-    test(new AddressGen(QubitCount, MaxWidth)) { dut =>
+    simulate(new AddressGen(QubitCount, MaxWidth)) { dut =>
       vectors.foreach { v =>
         dut.io.slice.poke(v.slice.U)
         dut.io.blockWidth.poke(v.qubits.length.U)

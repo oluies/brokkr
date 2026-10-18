@@ -1,7 +1,7 @@
 package brokkr
 
 import chisel3._
-import chiseltest._
+import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.io.Source
 
@@ -19,11 +19,11 @@ import scala.io.Source
   * The second is what the design assessment lists as the open precision risk, and this is the first
   * evidence about it.
   */
-class DiagonalKernelSpec extends AnyFlatSpec with ChiselScalatestTester {
+class DiagonalKernelSpec extends AnyFlatSpec with ChiselSim {
   val QubitCount = 4
   val MaxWidth = 2
   val DataWidth = 24
-  val FractionBits = DataWidth - 1
+  val FractionBits = DataWidth - 2
   val Scale = BigDecimal(BigInt(1) << FractionBits)
 
   case class Sample(index: Int, inRe: Double, inIm: Double, outRe: Double, outIm: Double)
@@ -89,7 +89,7 @@ class DiagonalKernelSpec extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "implement its fixed-point arithmetic exactly" in {
-    test(new DiagonalKernel(QubitCount, MaxWidth, DataWidth)) { dut =>
+    simulate(new DiagonalKernel(QubitCount, MaxWidth, DataWidth)) { dut =>
       drive(dut)
 
       samples.foreach { s =>
@@ -119,7 +119,7 @@ class DiagonalKernelSpec extends AnyFlatSpec with ChiselScalatestTester {
   it should "stay close to Scotty's double-precision result" in {
     var worst = 0.0
 
-    test(new DiagonalKernel(QubitCount, MaxWidth, DataWidth)) { dut =>
+    simulate(new DiagonalKernel(QubitCount, MaxWidth, DataWidth)) { dut =>
       drive(dut)
 
       samples.foreach { s =>
@@ -142,7 +142,7 @@ class DiagonalKernelSpec extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "hold its output until the next valid amplitude" in {
-    test(new DiagonalKernel(QubitCount, MaxWidth, DataWidth)) { dut =>
+    simulate(new DiagonalKernel(QubitCount, MaxWidth, DataWidth)) { dut =>
       drive(dut)
 
       dut.io.inValid.poke(false.B)

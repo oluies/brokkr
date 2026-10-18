@@ -15,9 +15,9 @@ import chisel3.util._
   * datapath rather than the choice of memory macro. A real engine would use SRAM, and at `k = 6`
   * would have to: 64 KiB of operator is not a register file.
   *
-  * Fixed point and truncation follow [[DiagonalKernel]]. The accumulation is widened rather than
+  * Fixed point and truncation follow [[DiagonalKernel]], including the two integer bits. The accumulation is widened rather than
   * truncated per term, so the only rounding is the final shift; with a unitary operator and a
-  * normalised input every output stays inside Q1.`fractionBits`.
+  * normalised input every output stays inside Q2.`fractionBits`.
   *
   * @param maxWidth  qubits in the block, so the operator is `2^maxWidth` square
   * @param dataWidth bits per real component, including the sign
@@ -27,7 +27,17 @@ class DenseKernel(val maxWidth: Int, val dataWidth: Int) extends Module {
   require(dataWidth >= 4, "a sign and three fraction bits is the smallest sensible format")
 
   val dimension: Int = 1 << maxWidth
-  val fractionBits: Int = dataWidth - 1
+  /** Q2.`fractionBits`: a stored integer `x` means `x / 2^fractionBits`, so the range is
+    * `[-2, 2)`.
+    *
+    * Two integer bits rather than one, which costs a bit of precision and buys correctness. A
+    * unitary operator has entries of exactly ±1 all over it — every `X`, `CNOT`, `SWAP` and Toffoli
+    * is a permutation matrix of them — and `1.0` is not representable in Q1.f, where the range stops
+    * at `1 - 2^-f`. It wraps to `-1.0`, silently flipping the sign of the most common coefficient
+    * there is. Amplitudes never need the extra range, but sharing one format keeps a single shift
+    * in the datapath.
+    */
+  val fractionBits: Int = dataWidth - 2
 
   val io = IO(new Bundle {
     /** Operator load port, addressed row-major as `row * 2^k + col`. */

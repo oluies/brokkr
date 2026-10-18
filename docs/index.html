@@ -181,7 +181,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: three RTL blocks verified, two datapaths measured ·
+  <p class="meta">17 October 2026 · status: all three datapaths built, verified and measured ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -408,44 +408,47 @@ they are <strong>three different datapaths</strong>:</p>
 </table>
 </div>
 
-<p>Synthesised, the three cost what the lattice says they should. Both kernels below are the same
-width (<span class="mono">k = 3</span>) and the same format (Q1.23), so this compares datapaths
-rather than two differently sized designs:</p>
+<p>Synthesised, the three cost what the lattice says they should. All three kernels below are the
+same width (<span class="mono">k = 3</span>) and the same format, so this compares datapaths rather
+than differently sized designs. They do not all move the same amount of data per cycle, though —
+the permute path moves a whole slice where the dense path emits one row — so the column that
+matters is the last one:</p>
 
 <div class="tablewrap">
 <table>
   <caption>Yosys, mapped to a generic gate library — a proxy for area, not a standard-cell flow.
   Reproduce with <code>scripts/area.sh</code>.</caption>
   <thead><tr>
-    <th>module</th><th>cells</th><th>flops</th><th>vs diagonal</th><th class="note">what it is</th>
+    <th>module</th><th>cells</th><th>amplitudes<br>per cycle</th><th>cells per<br>amplitude/cycle</th>
+    <th class="note">what it is</th>
   </tr></thead>
   <tbody>
-    <tr><td>AddressGen</td><td>79</td><td>0</td><td>—</td><td class="note">slice → base address, combinational</td></tr>
-    <tr class="hi"><td>DiagonalKernel</td><td>21 112</td><td>433</td><td>1.0×</td><td class="note">phase table + one complex multiplier</td></tr>
-    <tr class="hi"><td>DenseKernel</td><td>172 195</td><td>3 121</td><td><strong>8.2×</strong></td><td class="note">2^k complex multiply-accumulates</td></tr>
+    <tr><td>AddressGen</td><td>79</td><td>—</td><td>—</td><td class="note">slice → base address, combinational</td></tr>
+    <tr><td>BenesOnly</td><td>2 304</td><td>—</td><td>—</td><td class="note">the shuffle fabric alone, for reference</td></tr>
+    <tr class="hi"><td>DiagonalKernel</td><td>20 775</td><td>1</td><td>20 775</td><td class="note">phase table + one complex multiplier</td></tr>
+    <tr class="hi"><td>MonomialKernel</td><td>159 287</td><td>8</td><td><strong>19 910</strong></td><td class="note">2^k multipliers + a Benes network</td></tr>
+    <tr class="hi"><td>DenseKernel</td><td>169 577</td><td>1</td><td><strong>169 577</strong></td><td class="note">2^k complex multiply-accumulates</td></tr>
   </tbody>
 </table>
 </div>
 
-<p>The measured 8.2× is the predicted one. The dense path needs
-<span class="mono">2<sup>k</sup></span> complex multipliers where the diagonal path needs one, and
-<span class="mono">4<sup>k</sup></span> operator entries where it needs
-<span class="mono">2<sup>k</sup></span> — both ratios are <span class="mono">2<sup>k</sup></span>,
-which is 8 at <span class="mono">k = 3</span>. The flop counts confirm the storage half exactly:
-433 against 3 121, and the diagonal kernel's 384 table flops are precisely 8 entries × 2 components
-× 24 bits.</p>
+<div class="verdict">
+  <span class="label cool">What the numbers say</span>
+  <p><strong>The permute path costs what the phase path costs.</strong> 19 910 against 20 775 cells
+  per amplitude per cycle — within 4%. Permuting amplitudes is, to within measurement noise, free
+  relative to multiplying them.</p>
+  <p><strong>The dense path costs 8.5× either of them</strong>, which is
+  <span class="mono">2<sup>k</sup></span> as predicted, and the ratio grows with
+  <span class="mono">k</span>: at the <span class="mono">k = 6</span> design point it would be
+  around 64×.</p>
+  <p><strong>The shuffle fabric is 1.4% of the permute path</strong> — 2 304 cells of 159 287. The
+  thing that looked like the architectural risk is a rounding error next to the multipliers.</p>
+</div>
 
-<p><strong>The ratio is <span class="mono">2<sup>k</sup></span>, so it widens with exactly the
-parameter the roofline wants to increase.</strong> At the <span class="mono">k = 6</span> design
-point section 03 argues for, the dense path would cost around 64× the diagonal one. That is an
-extrapolation from one measured point rather than a second measurement — but the model predicted
-this point to within 2%, which is some reason to trust it.</p>
-
-<p>It does not mean a dense-only engine is 8× too big, because the paths run at different times and
-area is set by the peak. It means something more useful: <strong>diagonal blocks run on hardware
-eight times more expensive than they need</strong>, so the same silicon could run them eight lanes
-wide instead of one. With 18 of 65 blocks diagonal on the brickwork circuit, that is throughput
-being left on the floor rather than area.</p>
+<p>So the three-datapath argument holds, but its content has shifted. It is not that each path is
+differently expensive; it is that <em>two of the three are the same cheap thing and one is
+expensive</em>. Routing 18 diagonal and 21 monomial blocks of 65 through dense hardware would cost
+8.5× what they need, and the saving is throughput: the same silicon runs them eight lanes wide.</p>
 
 <p>The form is decided by <em>reading the matrix</em> rather than from a table of gate names, so it
 cannot disagree with the semantics and classifies <code>Dagger</code> and user-defined gates for
@@ -607,8 +610,8 @@ Bad silicon, fine Scala.</p>
   <rect class="box-2" x="224" y="210" width="340" height="120" rx="6" stroke-width="1"/>
   <text class="t" x="238" y="236">Permute path &#8212; Monomial</text>
   <text class="s" x="238" y="256">2^k complex multipliers, no MAC array</text>
-  <text class="s" x="238" y="274">2^k index map plus 2^k phases</text>
-  <text class="s" x="238" y="292">6 flops/amplitude; permutes and scales</text>
+  <text class="s" x="238" y="274">a Benes network routes the operator's</text>
+  <text class="s" x="238" y="292">permutation: 2k-1 stages, 1.4% of area</text>
   <text class="cap" x="238" y="312">21 OF 65 BLOCKS MEASURED</text>
 
   <!-- Lane C: dense -->
@@ -636,10 +639,12 @@ Bad silicon, fine Scala.</p>
   <text class="s" x="600" y="370">a bit permutation,</text>
   <text class="s" x="600" y="388">which is what</text>
   <text class="s" x="600" y="406">this fabric is for</text>
-  <text class="s" x="600" y="436">bank-conflict</text>
-  <text class="s" x="600" y="454">freedom at every</text>
-  <text class="s" x="600" y="472">stride is</text>
-  <text class="cap" x="600" y="494">UNPROVEN</text>
+  <text class="s" x="600" y="436">this is the memory</text>
+  <text class="s" x="600" y="454">side, not the</text>
+  <text class="s" x="600" y="472">operator's own</text>
+  <text class="s" x="600" y="490">permutation</text>
+  <text class="cap" x="600" y="516">BANK CONFLICTS</text>
+  <text class="cap" x="600" y="534">UNPROVEN</text>
 
   <!-- Memory and verification -->
   <rect class="box" x="766" y="70" width="186" height="220" rx="8" stroke-width="1"/>
@@ -686,7 +691,11 @@ Bad silicon, fine Scala.</p>
   <path class="arrow" d="M 740 250 L 766 250" marker-start="url(#ah)" marker-end="url(#ah)"/>
   <path class="arrow" d="M 859 290 L 859 326" marker-end="url(#ah)"/>
 </svg>
-<figcaption>The dense path is the one a CUTE-derived design gives you for free — <code>ABMatrixReg</code>
+<figcaption>Two different shuffles, which it is easy to conflate. The Omega fabric on the right
+moves amplitudes between the lanes and the banks, where the stride is set by the qubit support and
+is genuinely a bit permutation. The Benes network inside the permute path routes the
+<em>operator's</em> permutation, which measurement shows is usually not a bit permutation at all.
+The dense path is the one a CUTE-derived design gives you for free — <code>ABMatrixReg</code>
 becomes <code>OperatorReg</code>, <code>MatrixTE</code> and <code>ReducePE</code> become
 <code>ComplexMAC</code>, and <code>OmegaNetworkRouter</code> carries over almost unchanged, since a
 qubit stride <em>is</em> a bit permutation. The other two paths are what the measurements added, and
@@ -764,12 +773,22 @@ would leave most of its area idle on real circuits.</figcaption>
 <div class="stage now">
   <p class="when">Stage 3 · begun · one block standing</p>
   <h3>RTL</h3>
-  <p><strong>Three blocks exist and are verified</strong> against Scotty. The two Scala versions
-  meet through a generated vector file, for the reason given under verification below.</p>
+  <p><strong>All three datapaths exist and are verified</strong> against Scotty, every test running
+  under Verilator. The two Scala versions meet through a generated vector file, for the reason given
+  under verification below.</p>
   <ul>
     <li><strong><code>AddressGen</code></strong> — the bit insertion that turns a slice number into a
     base amplitude address. Combinational, one stage per supported qubit, checked against all 592
     exhaustive vectors for six qubits and supports up to three wide.</li>
+    <li><strong><code>MonomialKernel</code></strong> — the permute path: one complex multiplier per
+    lane and a <strong>Benes</strong> network, a whole slice per cycle. Not an Omega network, and
+    that is a measured decision: fusing randomised circuits and classifying the permutations that
+    come out gives 7.7% bit permutations, 33.5% affine over GF(2) and <strong>58.8%
+    arbitrary</strong> — Toffoli and Fredkin generate permutations that are not affine, so an Omega
+    network, which is blocking, could not route most blocks. A Benes network routes every
+    permutation in <span class="mono">(2k−1)·2<sup>k−1</sup></span> switches, with the settings
+    computed by the host once per block. The vectors used here contain an arbitrary permutation, so
+    the test exercises exactly the case Omega would fail.</li>
     <li><strong><code>DenseKernel</code></strong> — the MAC array: a full
     <span class="mono">2^k × 2^k</span> complex matrix-vector product, one output row per cycle.
     Checked the same two ways, and additionally simulated under <strong>Verilator</strong> against
@@ -821,14 +840,18 @@ point rather than an incidental one.</p>
   tells you two implementations agree; these tell you the implementation is right. Both are asserted
   at every fusion width, so a pass that preserved norm and phase relationships but broke the
   algorithm would still be caught.</li>
-  <li><strong>Verilator needs driving directly.</strong> As of Chisel 6.7.0 neither
-  <code>chiseltest</code>'s Verilator backend nor ChiselSim's svsim works with Verilator 5.052: the
-  first fails to compile its generated C++ harness with <code>unknown type name 'WData'</code>, the
-  second desynchronises with <code>Unexpected message: Ready</code> on the first clock edge, on a
-  design as trivial as <code>AddressGen</code>. So the netlist is driven by a SystemVerilog
-  testbench reading the same golden vectors through <code>$readmemh</code>, which is closer to what
-  a real bring-up looks like anyway. Worth knowing before copying CUTE's build, which pins
-  chiseltest 6.0.0.</li>
+  <li><strong>ChiselSim works, but only on Chisel 7.</strong> On 6.7.0 — the version CUTE pins —
+  ChiselSim's svsim desynchronises with <code>Unexpected message: Ready</code> on the first clock
+  edge against Verilator 5.052, on a design as trivial as <code>AddressGen</code>; and
+  <code>chiseltest</code>, the alternative, stopped at 6.0.0 and its Verilator backend fails to
+  compile its own C++ harness with <code>unknown type name 'WData'</code>. On Chisel 7.0.0-RC1 the
+  same ChiselSim test passes. So the project is on Chisel 7 and every test now runs under Verilator
+  rather than an interpreter. Reusing CUTE's modules later will mean matching whatever Chisel it is
+  on then; until there is a module to reuse, a working simulator is worth more.
+  <br><br>
+  A SystemVerilog testbench driving Verilator through <code>$readmemh</code> is kept alongside, for
+  the dense kernel. It tests the <em>generated netlist</em> with the toolchain an FPGA bring-up
+  would use, which is a slightly different question from whether the elaborated design is right.</li>
   <li><strong>Scala 2.13 consuming Scala 3: tried, and it does not work.</strong> CUTE sets
   <code>-Ytasty-reader</code>, which in principle lets Chisel code call Scotty’s jar directly, so it
   was worth testing rather than assuming. 2.13.15 resolves the package and then fails on every type
@@ -850,19 +873,33 @@ point rather than an incidental one.</p>
   the dense path is the minority — which is the architectural point — but not enough to size three
   datapaths against each other. The area cost of the two cheap paths is still unestimated, and a
   wider workload survey should come before anyone commits silicon to a ratio.</li>
-  <li><strong>Bank conflicts.</strong> The Omega network is the right <em>kind</em> of fabric, but
-  whether it resolves every stride without stalls is unproven here.</li>
+  <li><strong>Bank conflicts, still unproven — but a narrower question than it was.</strong> There
+  were two shuffle problems hiding under one word. The <em>operator's</em> permutation is now
+  settled: it is usually arbitrary, it needs a Benes network rather than an Omega one, and that
+  network costs 1.4% of its datapath. What remains is the <em>memory-side</em> question — whether
+  the amplitude store can serve a block's <span class="mono">2^k</span> strided addresses without
+  bank conflicts at every target index. That one is genuinely a bit-permutation problem, which is
+  what an Omega network is for, and it is the one still unanswered.</li>
   <li><strong>Operator construction on the critical path.</strong> Fusion costs
   <span class="mono">O(8<sup>k</sup>)</span> per gate on the CPU side. For a latency-bound loop —
   the main motivation — that cost may eat the gain. Caching operators across sweeps with only the
   parameters changed is the obvious mitigation and is untested.</li>
   <li><strong>Precision — now with one data point.</strong> Everything in the simulator is fp64
   complex. The first RTL to do arithmetic, the diagonal kernel, uses Q1.23 fixed point instead, and
-  the cost of that was measured rather than assumed: the worst deviation from Scotty over a fused
-  <code>RZ</code>/<code>CPHASE</code>/<code>T</code> block is <strong>1.94 × 10<sup>-7</sup></strong>,
-  about 1.6 quantisation steps. That is one block and one circuit, not a study — error accumulates
-  over a circuit's depth, and nothing here measures that yet. But fixed point is clearly not
-  disqualifying, which was the open question.</li>
+  the cost of that was measured rather than assumed: the worst deviation from Scotty is
+  <strong>3.3 × 10<sup>-7</sup></strong> for the diagonal path, 3.4 for the dense and 1.2 for the
+  permute, a handful of quantisation steps each. Fixed point is clearly not disqualifying, which was
+  the open question. It remains three blocks on three circuits, not a study — error accumulates over
+  a circuit's depth and nothing here measures that.
+  <br><br>
+  The format itself took a correction. Q1.23 looked natural, since amplitudes live in the unit disc,
+  but it cannot represent <span class="mono">1.0</span> — the range stops at
+  <span class="mono">1 − 2<sup>−23</sup></span>, so a coefficient of exactly 1 wraps to
+  <span class="mono">−1</span>. Unitary operators are <em>full</em> of ±1: every <code>X</code>,
+  <code>CNOT</code>, <code>SWAP</code> and Toffoli is a permutation matrix of them. The exact-model
+  check caught it as a sign flip on the permute path; the other two kernels had the same latent bug
+  and had merely been given vectors that avoided unit entries. Everything is Q2.22 now, one bit of
+  precision for correctness.</li>
   <li><strong>A latent inconsistency in Scotty.</strong> <code>registerToState</code> tensors qubit 0
   in as the most significant factor, while <code>applyTargetGate</code> treats qubit 0 as the least
   significant bit. For an all-zero or all-one register this is invisible, which is why it has
@@ -877,7 +914,7 @@ point rather than an incidental one.</p>
   <a href="https://github.com/oluies/scotty">scotty</a> (the simulator and golden model) and
   <a href="https://github.com/oluies/pctc">pctc</a> (noisy post-selected closed timelike curves,
   the workload that started this). Apache-2.0.</p>
-  <p>Three blocks of RTL exist. The engine does not.</p>
+  <p>All three datapaths exist. The engine does not.</p>
   <p class="colophon">&#169; 2026 &#214;rjan Lundberg &#183;
     <a href="https://github.com/oluies">GitHub</a> &#183;
     <a href="https://www.linkedin.com/in/orjanlundberg/">LinkedIn</a> &#183;

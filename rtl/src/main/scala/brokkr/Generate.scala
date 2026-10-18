@@ -17,7 +17,9 @@ object Generate {
     "DiagonalKernel" -> (() => new DiagonalKernel(qubitCount = 6, maxWidth = 3, dataWidth = 24)),
     // Same width and format as the diagonal kernel, so a synthesis run compares the datapaths
     // rather than two differently sized designs.
-    "DenseKernel" -> (() => new DenseKernel(maxWidth = 3, dataWidth = 24))
+    "DenseKernel" -> (() => new DenseKernel(maxWidth = 3, dataWidth = 24)),
+    "MonomialKernel" -> (() => new MonomialKernel(maxWidth = 3, dataWidth = 24)),
+    "BenesOnly" -> (() => new BenesOnly(maxWidth = 3, dataWidth = 24))
   )
 
   /** `Generate [module ...]`, or no arguments for all of them. Writes into `build/`. */

@@ -217,3 +217,61 @@ file instead, which is what a C++ difftest harness or an FPGA bring-up would use
 A trap worth recording: **Mill resolves a SNAPSHOT from `~/.ivy2/local` before `~/.m2`**, so a stale
 `sbt publishLocal` silently shadowed a fresh `publishM2Local`, and the fusion package appeared not to
 exist at all. Publish to both.
+
+## Addendum 4: the permute path, and two corrections
+
+### An Omega network cannot route the permute path
+
+`PermutationStudy` fuses 400 randomised circuits on 6 qubits and classifies the permutations that
+monomial blocks contain:
+
+```
+  Identity              0    0.0%
+  BitPermutation      108    7.7%
+  Affine              472   33.5%
+  Arbitrary           829   58.8%
+```
+
+Toffoli and Fredkin generate permutations that are not affine over GF(2), so this is what a real
+gate set produces. An Omega network is blocking and routes bit permutations natively — 7.7% of
+blocks. A **Benes network** is rearrangeably non-blocking: every permutation, in `(2k-1) * 2^(k-1)`
+switches, with the settings computed by the host once per block (the looping algorithm, in
+`BenesRouter`, self-checked on 500 random permutations at each of sizes 2 through 32).
+
+This is a *different* shuffle from the memory-side one. Moving amplitudes between lanes and banks is
+a bit permutation set by the qubit support, and Omega suits it. The operator's own permutation is
+not a bit permutation. Conflating the two is easy and was the mistake the earlier diagram made.
+
+### Area, all three datapaths
+
+```
+module              cells  amps/cyc   cells per amp/cyc
+AddressGen             79         -                   -
+BenesOnly            2304         -                   -
+DiagonalKernel      20775         1               20775
+MonomialKernel     159287         8               19910
+DenseKernel        169577         1              169577
+```
+
+- The permute path costs what the phase path costs, within 4% per unit throughput.
+- The dense path costs 8.5x either — `2^k` as predicted, so ~64x at k=6.
+- **The shuffle fabric is 1.4% of the permute path.** The thing that looked like the architectural
+  risk is a rounding error next to the multipliers.
+
+### Correction: Q1.23 cannot hold a coefficient of 1
+
+The exact-model check caught a sign flip on the permute path. Q1.23 stops at `1 - 2^-23`, so a
+coefficient of exactly 1.0 wraps to -1.0 — and unitary operators are full of ±1, since every X,
+CNOT, SWAP and Toffoli is a permutation matrix of them. The diagonal and dense kernels had the same
+latent bug and had merely been given vectors that avoided unit entries.
+
+Everything is Q2.22 now: one bit of precision for correctness. Deviations from Scotty roughly
+doubled as expected — 3.3e-07 diagonal, 3.4e-07 dense, 1.2e-07 permute — all far inside tolerance.
+
+### Correction: ChiselSim works, on Chisel 7
+
+The earlier note said ChiselSim's svsim does not work with Verilator 5.052. That is true of Chisel
+**6.7.0**, the version CUTE pins, and false in general: on 7.0.0-RC1 the same test passes. The
+project is now on Chisel 7 and every test runs under Verilator rather than an interpreter.
+chiseltest remains unusable — it stopped at 6.0.0 and its Verilator backend fails to compile its own
+harness against Verilator 5.
