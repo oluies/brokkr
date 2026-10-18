@@ -1,7 +1,6 @@
 package brokkr.model
 
 import brokkr.model.BankConflicts.*
-import scala.collection.mutable
 
 /** The three things [[Arbiter]] left out: a per-bank request network, operator traffic competing
   * with amplitude traffic, and the writeback path.
@@ -10,20 +9,20 @@ import scala.collection.mutable
   * knowing before building a model for them.
   */
 object Integration:
-  /** Bandwidth with genuine per-bank request queues.
+  /** Bandwidth against per-bank queue depth, with strictly in-order generation.
     *
-    * An earlier version of this model claimed to remove head-of-line blocking and did not. It kept
-    * a single shared pending buffer, so a backlog at one bank still consumed slots every other bank
-    * needed — the same constraint as the baseline it was compared against. The two were nearly
-    * identical by construction and their agreement was not evidence about interconnects.
+    * This is a queue-depth sweep and nothing more, which is worth stating plainly because two
+    * earlier versions of this model claimed to measure something else.
     *
-    * Here each bank has its own queue, `depth` entries, fed in stream order. A request to a full
-    * bank stalls the generator, which is real backpressure rather than an artifact, but a backlog
-    * at one bank no longer occupies anything another bank could have used.
+    * The generator walks the stream in order and stops at the first request whose target bank is
+    * full. That is head-of-line blocking, and giving each bank its own queue does not remove it —
+    * a full bank still halts requests behind it that were bound elsewhere. At equal depth and issue
+    * width this is algorithmically the same as [[Arbiter.bandwidth]] at `lookahead = 1`, and
+    * produces the same numbers.
     *
-    * That makes the queue depth the interesting parameter. A slice sends all `2^k` of its accesses
-    * to however many banks the mapping spreads it over, so for a mapping that concentrates, the
-    * generator can only move on to the next slice once the current one fits in a queue.
+    * So nothing here isolates a request network. What it does measure, cleanly, is how much deeper
+    * queues are worth when the generator cannot bypass: a great deal, and the amount depends on how
+    * far a mapping spreads a slice.
     */
   def perBankQueues(
       mapping: Mapping,
@@ -46,8 +45,9 @@ object Integration:
           queued(bank) -= 1
           served += 1
 
-      // In-order generation. It stalls on a full target bank, which is backpressure that a real
-      // network also has; what it no longer does is block on a bank other than its own target.
+      // In-order generation: it stops at the first full target bank. Requests behind it are held
+      // even when their own banks are idle, so this is head-of-line blocking and the per-bank
+      // queues do not remove it. Only the depth is under study here.
       var issued = 0
       var stalled = false
 
@@ -75,36 +75,34 @@ object Integration:
       extendedHamming(qubitCount, bankBits)
     )
 
-    println("== 1. Per-bank request queues ==")
+    println("== 1. Queue depth, with in-order generation ==")
     println()
     println(s"$qubitCount qubits, $banks banks, width-$width blocks, issue width $banks.")
-    println("Each bank has its own queue of the given depth, fed in stream order. The baseline is")
-    println("the shared-window arbiter at lookahead 1, which is the configuration that genuinely")
-    println("blocks: one request at the head, and if its bank is full nothing else moves.")
+    println("Each bank has its own queue of the given depth. The generator is strictly in order and")
+    println("stops at the first full target bank, so this measures depth alone — it is the same")
+    println("algorithm as the arbiter at lookahead 1, and at equal depth it gives the same numbers.")
     println()
-    println(f"${"mapping"}%-14s${"blocked"}%9s" + Seq(4, 16, 64, 256).map(d => f"${s"d=$d"}%9s").mkString + f"${"ceiling"}%9s")
+    println(f"${"mapping"}%-14s" + Seq(4, 16, 64, 256).map(d => f"${s"d=$d"}%9s").mkString + f"${"ceiling"}%9s")
 
     val perBank = mappings.map: mapping =>
       val support = Schedule.worstSupport(mapping, qubitCount, width)
-      val blocked = Arbiter.bandwidth(mapping, support, slices, 4, banks, 1)
       val depths = Seq(4, 16, 64, 256).map(perBankQueues(mapping, support, slices, _, banks))
 
-      println(
-        f"${mapping.name}%-14s$blocked%9.1f" + depths.map(b => f"$b%9.1f").mkString + f"$banks%9d"
-      )
+      println(f"${mapping.name}%-14s" + depths.map(b => f"$b%9.1f").mkString + f"$banks%9d")
 
-      mapping -> (support, depths.last)
+      mapping -> depths.last
 
     println()
     println(s"A slice sends all ${1 << width} of its accesses to however many banks the mapping")
-    println("spreads it over, so the generator can only move on to the next slice once the current")
-    println("one fits. That is why depth matters and why it matters most to the mapping that")
-    println("concentrates: low bits needs a queue the size of a whole slice before it overlaps")
-    println("slices at all, while a mapping that spreads needs almost nothing.")
+    println("spreads it over, and an in-order generator can only reach the next slice once the")
+    println("current one fits. So depth matters most to the mapping that concentrates: low bits")
+    println("needs a queue the size of a whole slice before it overlaps slices at all, while a")
+    println("mapping that spreads is most of the way there by depth 16.")
     println()
-    println("This supersedes an earlier version of this section, which compared two configurations")
-    println("that shared one bounded window and were therefore nearly the same model. It reported")
-    println("that a request network buys almost nothing. The numbers above say otherwise.")
+    println("Depth is one lever. Bypass is the other, and Arbiter sweeps it. What is *not* measured")
+    println("anywhere here is a request network as such: at equal depth and issue discipline, giving")
+    println("each bank its own queue changes nothing, because the generator still stalls on a full")
+    println("target. Two earlier versions of this section claimed otherwise and were wrong.")
     println()
 
     println("== 2. Operator traffic against amplitude traffic ==")
@@ -135,9 +133,7 @@ object Integration:
     println()
     println(f"${"mapping"}%-14s${"read only"}%11s${"read+write"}%12s${"RMW"}%8s")
 
-    perBank.foreach: (mapping, result) =>
-      val read = result._2
-
+    perBank.foreach: (mapping, read) =>
       println(f"${mapping.name}%-14s$read%11.1f${read / 2}%12.1f$read%8.1f")
 
     println()

@@ -155,29 +155,30 @@ That is the number to design against.
 
 Three remaining questions, two of which need arithmetic rather than simulation.
 
-**The request network buys a great deal** — the opposite of what this README said before; see
-below. With genuine per-bank request queues, fed in stream order so a backlog at one bank occupies
-nothing another needs:
+**Deeper queues buy a great deal; a request network, as far as this can tell, buys nothing.** Those
+are different claims and earlier versions of this README conflated them. The sweep varies per-bank
+queue depth with the generator strictly in order:
 
-| mapping | blocked | d=4 | d=16 | d=64 | d=256 | ceiling |
-|---|---|---|---|---|---|---|
-| low bits | 1.0 | 1.1 | 1.3 | **28.5** | 28.5 | 32 |
-| xor fold | 1.0 | 5.3 | 25.6 | 31.1 | 31.1 | 32 |
-| distinct | 1.0 | 9.6 | 15.9 | 15.9 | 15.9 | 32 |
-| ext. Hamming | 1.0 | 18.2 | **30.2** | 31.4 | 31.4 | 32 |
+| mapping | d=4 | d=16 | d=64 | d=256 | ceiling |
+|---|---|---|---|---|---|
+| low bits | 1.1 | 1.3 | **28.5** | 28.5 | 32 |
+| xor fold | 5.3 | 25.6 | 31.1 | 31.1 | 32 |
+| distinct | 9.6 | 15.9 | 15.9 | 15.9 | 32 |
+| ext. Hamming | 18.2 | **30.2** | 31.4 | 31.4 | 32 |
 
-The shape is the burst length. A slice sends all `2^k` accesses — 64 here — to however many banks
-the mapping spreads it across, and the generator can only move to the next slice once the current
-one fits in queues. **Low bits needs a queue the size of a whole slice** before it overlaps slices
-at all; a mapping that spreads needs a quarter of that.
+The shape is the burst length: a slice sends all `2^k` accesses to however many banks the mapping
+spreads it across, and an in-order generator reaches the next slice only once the current one fits.
+**Low bits needs a queue the size of a whole slice**; a mapping that spreads is most of the way
+there by depth 16.
 
-So once the queues are right the mapping is not worth bandwidth — both reach the high twenties — it
-is worth **queue depth**, 16 against 64, across all 32 banks.
+Depth is one lever, bypass is the other, and they substitute to a degree — extended Hamming reaches
+about 30 either by depth 16 with no bypass or by depth 4 with a lookahead of 256.
 
-*Correction:* an earlier version reported that a request network buys almost nothing. The
-experiment behind it was not an experiment: the "no head-of-line blocking" configuration kept the
-same single bounded window as its baseline, so a backlog at one bank still consumed slots other
-banks needed. The two were nearly the same model and their agreement was a tautology.
+*Retracted:* this section twice carried a conclusion about interconnects its experiment did not
+support — first that a network buys almost nothing, then the opposite. Nothing here isolates a
+request network: at equal depth and issue discipline, per-bank queues are the same algorithm as the
+arbiter at lookahead 1 and give the same numbers, because an in-order generator still stalls on a
+full target. Whether a network that decouples depth from bypass earns its area is unanswered.
 
 **Operator traffic is not in contention.** A block loads its operator once and streams the whole
 state past it. A dense `4^k` operator against `2^n` amplitudes is 0.39% of traffic at n=20, k=6 and

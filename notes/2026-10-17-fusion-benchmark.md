@@ -520,6 +520,9 @@ reported.
 
 ### The lookahead parameter was not the lookahead
 
+**Superseded by addendum 11.** The table and the 9x conclusion below are the artifact; the original
+figures were right. Kept so addendum 11 has something to point at.
+
 `Arbiter.bandwidth` refilled its issue window *inside* the issue loop, so one cycle's scan could walk
 `lookahead + issueWidth - 1` requests past the blocked head rather than `lookahead`. Every
 intermediate column was optimistic by an amount depending on how many requests issued that cycle,
@@ -567,6 +570,9 @@ says it is the worst per-slice conflict count rather than the worst bandwidth, w
 and were being conflated.
 
 ## Addendum 10: the request network, measured properly
+
+**Retracted by addendum 12.** Neither this addendum nor the one it corrects measured a request
+network. Kept for the record.
 
 Addendum 8 reported that a per-bank request network buys almost nothing, and that the interconnect
 is not where this design's difficulty lives. **Both are wrong**, and the experiment behind them was
@@ -648,3 +654,52 @@ three places still said the memory-side shuffle *is* a bit permutation that an O
 which the 0.00-0.90% measurement contradicts: the address stride is a bit permutation, but composed
 with the bank mapping that makes gathers conflict-free it is affine. Both shuffles need more than
 Omega, for different reasons.
+
+
+## Addendum 12: the interconnect claim, retracted
+
+Three versions of this model have now carried a conclusion about interconnects that the experiment
+did not support. The claim is withdrawn rather than corrected a third time.
+
+1. Addendum 8 reported that a request network buys almost nothing. Its two configurations shared
+   one bounded window and were nearly the same model; their agreement was a tautology.
+2. Addendum 10 reported the opposite. Its "per-bank queues" model still stalled the generator at
+   the first full target bank, so head-of-line blocking was never removed and the per-bank queues
+   were unobservable — at equal depth it is the *same algorithm* as the arbiter at lookahead 1,
+   and gives the same numbers. Its baseline column was separately capped at 1.0 by construction.
+3. A review pointed out that the repo's own figures contradicted the headline: at the same depth 4,
+   the shared-window arbiter at lookahead 32 beat the per-bank model on all four mappings, fifteen
+   lines above the claim that the network "buys a great deal".
+
+### What is actually measured
+
+Two levers, both real, neither an interconnect:
+
+```
+# queue depth, generator strictly in order
+mapping             d=4     d=16     d=64    d=256  ceiling
+low bits            1.1      1.3     28.5     28.5       32
+xor fold            5.3     25.6     31.1     31.1       32
+distinct            9.6     15.9     15.9     15.9       32
+ext. Hamming       18.2     30.2     31.4     31.4       32
+
+# bypass distance, queue depth 4 (addendum 11)
+mapping        in order   look 8  look 32  look 256
+ext. Hamming       18.2     18.2     20.1      31.7
+```
+
+They substitute for each other to a degree: extended Hamming reaches about 30 either by depth 16
+with no bypass, or by depth 4 with a lookahead of 256.
+
+**Whether a network that decouples them is worth its area is a question these models cannot answer**,
+because none of them has an in-order generator that can bypass a full bank. Building a fourth model
+to settle it would be the obvious move; recording that the previous three did not settle it is the
+necessary one.
+
+### On the pattern
+
+Five reviews, five Fails, and the same error three times: attributing a measured effect to the
+feature I was interested in rather than to the parameter I had actually varied. The design
+conclusions have been stable throughout — XOR banking, Benes for both shuffles, queue depth at the
+burst length — while the *causal* claims around them have been wrong repeatedly. Numbers that move
+when a model is corrected deserve more suspicion than numbers that do not.

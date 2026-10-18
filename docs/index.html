@@ -920,7 +920,7 @@ would leave most of its area idle on real circuits.</figcaption>
     <span class="label hot">A correction to the correction</span>
     <p>The previous section said the naive mapping buys its way to full bandwidth with buffering.
     That was true of an arbiter with unbounded queues and free reordering, and it is <strong>false
-    under realistic issue</strong>: with depth-4 queues low bits reaches 9.4 of 32 even at a
+    under realistic issue</strong>: with depth-4 queues low bits reaches 9.7 of 32 even at a
     lookahead of 256.</p>
     <p>The reason is a burst-length effect the first model could not express. Each slice sends all
     <span class="mono">2<sup>k</sup></span> of its accesses to one bank, so the issue window has to
@@ -979,51 +979,49 @@ would leave most of its area idle on real circuits.</figcaption>
   contention between operator loads and amplitude traffic, and the writeback path. Two of them turn
   out to need arithmetic rather than simulation.</p>
 
-  <p><strong>The request network buys a great deal</strong> — which is the opposite of what an
-  earlier version of this page said, and the correction is explained below. Giving each bank its own
-  request queue, fed in stream order, so that a backlog at one bank occupies nothing another bank
-  needs:</p>
+  <p><strong>Deeper queues buy a great deal. A request network, as far as this can tell, buys
+  nothing.</strong> Those are different claims, and two earlier versions of this page conflated
+  them. What the sweep below varies is per-bank queue depth, with the generator strictly in order:</p>
 
 <div class="tablewrap">
 <table>
   <caption>Accesses per cycle against per-bank queue depth, 32 banks, width-6 blocks, issue width
-  32. “blocked” is the shared-window arbiter at lookahead 1 — the configuration that genuinely
-  blocks, since one request sits at the head and nothing moves if its bank is full.</caption>
+  32, generator strictly in order. <code>model.runMain brokkr.model.Integration</code>.</caption>
   <thead><tr>
-    <th>mapping</th><th>blocked</th><th>d=4</th><th>d=16</th><th>d=64</th><th>d=256</th><th>ceiling</th>
+    <th>mapping</th><th>d=4</th><th>d=16</th><th>d=64</th><th>d=256</th><th>ceiling</th>
   </tr></thead>
   <tbody>
-    <tr><td>low bits</td><td>1.0</td><td>1.1</td><td>1.3</td><td><strong>28.5</strong></td><td>28.5</td><td>32</td></tr>
-    <tr><td>xor fold</td><td>1.0</td><td>5.3</td><td>25.6</td><td>31.1</td><td>31.1</td><td>32</td></tr>
-    <tr><td>distinct</td><td>1.0</td><td>9.6</td><td>15.9</td><td>15.9</td><td>15.9</td><td>32</td></tr>
-    <tr class="hi"><td>ext. Hamming</td><td>1.0</td><td>18.2</td><td><strong>30.2</strong></td><td>31.4</td><td>31.4</td><td>32</td></tr>
+    <tr><td>low bits</td><td>1.1</td><td>1.3</td><td><strong>28.5</strong></td><td>28.5</td><td>32</td></tr>
+    <tr><td>xor fold</td><td>5.3</td><td>25.6</td><td>31.1</td><td>31.1</td><td>32</td></tr>
+    <tr><td>distinct</td><td>9.6</td><td>15.9</td><td>15.9</td><td>15.9</td><td>32</td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td>18.2</td><td><strong>30.2</strong></td><td>31.4</td><td>31.4</td><td>32</td></tr>
   </tbody>
 </table>
 </div>
 
-  <p>The shape of it is the burst length. A slice sends all
-  <span class="mono">2<sup>k</sup></span> of its accesses — 64 here — to however many banks the
-  mapping spreads it across, and the generator can only move on to the next slice once the current
-  one fits in queues. So <strong>low bits needs a queue the size of a whole slice</strong> before it
-  overlaps slices at all: 1.3 at depth 16, then 28.5 at depth 64. A mapping that spreads needs far
-  less, reaching 30.2 at depth 16.</p>
+  <p>The shape is the burst length. A slice sends all <span class="mono">2<sup>k</sup></span> of its
+  accesses — 64 here — to however many banks the mapping spreads it across, and an in-order
+  generator can only reach the next slice once the current one fits. So <strong>low bits needs a
+  queue the size of a whole slice</strong> before it overlaps slices at all: 1.3 at depth 16, then
+  28.5 at depth 64. A mapping that spreads is most of the way there by depth 16.</p>
+
+  <p>Depth is one lever and bypass is the other; the arbiter table above sweeps bypass. Both work,
+  and they substitute for each other to a degree — extended Hamming reaches about 30 either by
+  depth 16 with no bypass, or by depth 4 with a lookahead of 256.</p>
 
   <div class="verdict">
-    <span class="label cool">What the mapping is actually worth</span>
-    <p>Not bandwidth, once the queues are right — both reach the high twenties. It is worth
-    <strong>queue depth</strong>: 16 against 64, a factor of four in the request buffers, for the
-    same result. That is a real and sizeable cost, since the queues are per bank and there are
-    thirty-two of them, but it is a different claim from the one this section used to make.</p>
-  </div>
-
-  <div class="verdict">
-    <span class="label">What this section said yesterday</span>
-    <p>It said a request network buys almost nothing and that the interconnect is not where the
-    difficulty lives. <strong>That was wrong, and the experiment behind it was not an experiment.</strong>
-    The configuration labelled “no head-of-line blocking” kept the same single bounded window as the
-    baseline it was compared against, so a backlog at one bank still consumed slots every other bank
-    needed. The two were nearly the same model, and their agreement within a few percent was a
-    tautology rather than a finding. The table above uses genuine per-bank queues.</p>
+    <span class="label hot">A claim retracted, twice</span>
+    <p>This section has twice carried a conclusion about interconnects that its experiment did not
+    support. First it reported that a request network buys almost nothing, comparing two
+    configurations that shared one bounded window and were therefore nearly the same model. Then it
+    reported the opposite, comparing a queue-depth sweep against a baseline that was capped at 1.0
+    by construction.</p>
+    <p>The honest position is that <strong>nothing here isolates a request network at all</strong>.
+    At equal depth and issue discipline, giving each bank its own queue changes nothing, because an
+    in-order generator still stalls on a full target — the per-bank arrangement is the same
+    algorithm as the arbiter at lookahead 1, and produces the same numbers. What is measured is
+    depth, and separately bypass. Whether a network that decouples them is worth its area is a
+    question this model cannot answer, and the page no longer claims it can.</p>
   </div>
 
   <p><strong>Operator traffic is not in contention.</strong> A block loads its operator once and
@@ -1153,11 +1151,11 @@ point rather than an incidental one.</p>
   <li><strong>Bank conflicts: answered, and the answer is a bank mapping rather than a fabric.</strong>
   Both shuffle problems that were hiding under one word now have measurements. The operator's
   permutation is usually arbitrary and needs a Benes network, which costs 1.4% of its datapath. The
-  memory-side question is settled by stage 2: at a realistic issue window the bank mapping is worth
-  9× in bandwidth, 2.1 accesses per cycle against 19.1 of a possible 32, and
-  the interconnect around it matters a great deal: with genuine per-bank request queues the depth
-  must reach the slice burst length before a concentrating mapping overlaps slices at all, so the
-  mapping is worth a factor of four in queue depth rather than in bandwidth. What is not modelled is
+  memory-side question is settled by stage 2: under in-order issue with modest queues the bank
+  mapping is worth 16× in bandwidth, 1.1 accesses per cycle against 18.2 of a possible 32, and
+  the queue depth around it matters a great deal: it must reach the slice burst length before a
+  concentrating mapping overlaps slices at all. Whether a request network is worth its area is
+  <em>not</em> answered here — no model built so far isolates one. What is also not modelled is
   refill from a level below when the state does not fit on chip, and the CPU-side cost of preparing
   each block's descriptors.</li>
   <li><strong>A bank mapping has to be checked for coverage, not only for conflicts.</strong> One of

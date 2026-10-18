@@ -39,8 +39,9 @@ object Arbiter:
     * is really a statement about the cap. The window here is sized to exercise the issue width and
     * is topped up as it drains; only the scan distance is bounded.
     *
-    * @param lookahead blocked requests the issue logic may scan past. 1 is strictly in-order —
-    *                  issue the whole issuable prefix, stop at the first blocked request.
+    * @param lookahead window positions the issue logic may scan in a cycle, so it may pass over
+    *                  `lookahead - 1` blocked requests. 1 is strictly in-order: issue the whole
+    *                  issuable prefix, stop at the first blocked request.
     */
   def bandwidth(
       mapping: Mapping,
@@ -50,7 +51,7 @@ object Arbiter:
       issueWidth: Int,
       lookahead: Int
   ): Double =
-    require(lookahead >= 1, s"a lookahead of $lookahead would never fill the window")
+    require(lookahead >= 1, s"a lookahead of $lookahead would scan nothing and never issue")
     require(queueDepth >= 1, s"a queue depth of $queueDepth would never accept a request")
     require(issueWidth >= 1, s"an issue width of $issueWidth would never issue one")
 
