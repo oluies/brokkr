@@ -96,6 +96,32 @@ bank — 13.6× the floor at k=6, and never conflict-free at any bank count.
 Single-cycle gathering for *every* support stops being affordable past k=3 (64 banks via extended
 Hamming; 2048 to reach k=5 via BCH), but the mean is what sets throughput.
 
+### The schedule
+
+```bash
+./mill model.runMain brokkr.model.Schedule
+```
+
+That bound is per *slice*, and slices are independent: one whose addresses pile into a single bank
+leaves the others idle for the next slice to use. Bandwidth in accesses per cycle against reorder
+window depth, 32 banks, width-6 blocks, each mapping on the support it handles worst:
+
+| mapping | d=1 | d=2 | d=4 | d=8 | d=16 | d=32 | banks reachable |
+|---|---|---|---|---|---|---|---|
+| low bits | 1.0 | 2.0 | 4.0 | 8.0 | 16.0 | **32.0** | 32 of 32 |
+| xor fold | 4.0 | 8.0 | 16.0 | **32.0** | 32.0 | 32.0 | 32 of 32 |
+| distinct | 8.0 | 12.0 | 16.0 | 16.0 | 16.0 | 16.0 | **16 of 32** |
+| ext. Hamming | 16.0 | 19.1 | 27.3 | **32.0** | 32.0 | 32.0 | 32 of 32 |
+
+So the naive mapping's 13.6× is a **latency** penalty, not a bandwidth one — it buys its way out
+with buffering, at depth 32 against extended Hamming's 8. A slice in flight carries 64 outstanding
+accesses, so that is 2048 against 512: four times the queue for the same bandwidth.
+
+**A mapping must be checked for coverage, not only for conflicts.** `distinct` is capped at half
+the bandwidth however deep the window, because its columns are the values 1 to 14 and none sets the
+fifth bank bit — the upper sixteen banks are never addressed. The per-slice model rated it among
+the better mappings (1.27× the floor at k=6) and could not see this.
+
 ### Why a Benes network, not an Omega network
 
 `PermutationStudy` fuses randomised circuits and classifies the permutations monomial blocks

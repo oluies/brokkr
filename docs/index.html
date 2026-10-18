@@ -181,7 +181,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: three datapaths measured; bank conflicts answered ·
+  <p class="meta">17 October 2026 · status: three datapaths measured; banking and schedule modelled ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -828,13 +828,70 @@ would leave most of its area idle on real circuits.</figcaption>
     count. They are also <strong>essentially solved by a handful of XOR gates</strong>: a mapping
     whose columns are a leading one plus five address bits gets the mean within
     <strong>20% of the floor</strong>.</p>
-    <p>This was the stated go/no-go for RTL. It goes.</p>
+    <p>This was the stated go/no-go for RTL. It goes — and the schedule below shows the penalty is
+    paid in buffering rather than in bandwidth.</p>
   </div>
 
-  <p>Two things this does not answer. It assumes one access per bank per cycle and no queuing, so it
-  is a lower bound on cycles rather than a schedule. And it says nothing about routing amplitudes
-  from banks to lanes once fetched — though the permute path's measurement, where a full Benes
-  network cost 1.4% of the datapath, suggests that fabric is not where the difficulty lies.</p>
+  <h3>The schedule, which moves the answer</h3>
+
+  <p>That bound assumes one access per bank per cycle and no queuing, which makes it a statement
+  about a <em>slice</em>. Slices are independent, though: one whose addresses pile into a single
+  bank leaves the other thirty-one idle, and the next slice can use them. So the bound is
+  pessimistic about throughput, and the real question is not whether a mapping works but how much
+  buffering it costs to make it work.</p>
+
+  <p>Running every slice through a reorder window of a given depth, serving one access per bank per
+  cycle:</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Bandwidth in accesses per cycle against window depth, 32 banks, width-6 blocks, each
+  mapping on the support it handles worst. 14 qubits so that every slice is run rather than a
+  prefix. <code>model.runMain brokkr.model.Schedule</code>.</caption>
+  <thead><tr>
+    <th>mapping</th><th>d=1</th><th>d=2</th><th>d=4</th><th>d=8</th><th>d=16</th><th>d=32</th>
+    <th class="note">banks reachable</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>low bits</td><td>1.0</td><td>2.0</td><td>4.0</td><td>8.0</td><td>16.0</td><td><strong>32.0</strong></td><td class="note">32 of 32</td></tr>
+    <tr><td>xor fold</td><td>4.0</td><td>8.0</td><td>16.0</td><td><strong>32.0</strong></td><td>32.0</td><td>32.0</td><td class="note">32 of 32</td></tr>
+    <tr><td>distinct</td><td>8.0</td><td>12.0</td><td>16.0</td><td>16.0</td><td>16.0</td><td>16.0</td><td class="note"><strong>16 of 32</strong></td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td>16.0</td><td>19.1</td><td>27.3</td><td><strong>32.0</strong></td><td>32.0</td><td>32.0</td><td class="note">32 of 32</td></tr>
+  </tbody>
+</table>
+</div>
+
+  <p><strong>This softens the headline above and sharpens it at the same time.</strong> With enough
+  slices in flight even the naive low-bits mapping reaches full bandwidth, so its 13.6× is a
+  <em>latency</em> penalty rather than a bandwidth one — it buys its way out with buffering. But
+  buffering is the cost: depth 32 against extended Hamming's depth 8, and a slice in flight carries
+  64 outstanding accesses, so that is 2 048 against 512. Four times the queue to reach the same
+  bandwidth.</p>
+
+  <div class="verdict">
+    <span class="label hot">What only the schedule could see</span>
+    <p>The <code>distinct</code> mapping is <strong>capped at half the bandwidth no matter how deep
+    the window</strong>, because half the banks are not reachable at all. Its columns are the values
+    1 to 14, none of which sets the fifth bank bit, so a sixth of the address space never addresses
+    the upper sixteen banks. No amount of queuing fixes a bank that is never asked for.</p>
+    <p>The per-slice model could not see this. It measures conflicts <em>within</em> a slice and
+    reports <code>distinct</code> as one of the better mappings — 1.27× the floor at
+    <span class="mono">k = 6</span>. A mapping has to be checked for coverage as well as for
+    conflicts, and those are different properties.</p>
+  </div>
+
+  <p>One methodological note, because it nearly became a wrong result. The first run of this model
+  sampled 256 of 16 384 slices and reported <code>distinct</code> as reaching only 16 banks — which
+  was true of the run and false of the mapping, since a short prefix leaves the high address bits
+  always zero and the banks they would reach never appear. The numbers above enumerate every slice.
+  That <code>distinct</code> is genuinely capped is the conclusion after fixing the artifact, not
+  before it.</p>
+
+  <p>What remains unanswered: this scheduler may serve any pending access, so it is optimistic, and
+  the depths it reports are lower bounds on what real hardware needs. And it still says nothing
+  about routing amplitudes from banks to lanes once fetched — though the permute path's measurement,
+  where a full Benes network cost 1.4% of the datapath, suggests that fabric is not where the
+  difficulty lies.</p>
 </div>
 
 <div class="stage now">
@@ -943,10 +1000,15 @@ point rather than an incidental one.</p>
   <li><strong>Bank conflicts: answered, and the answer is a bank mapping rather than a fabric.</strong>
   Both shuffle problems that were hiding under one word now have measurements. The operator's
   permutation is usually arbitrary and needs a Benes network, which costs 1.4% of its datapath. The
-  memory-side question is settled by stage 2: the naive low-bits mapping is catastrophic and a
-  cheap linear one gets within 20% of the floor. What remains is a <em>schedule</em> rather than a
-  feasibility question — the model assumes one access per bank per cycle with no queuing, so it
-  bounds cycles from below rather than describing a working controller.</li>
+  memory-side question is settled by stage 2: the naive low-bits mapping is catastrophic per slice
+  but buys its way to full bandwidth with a window 32 slices deep, while a cheap linear mapping needs
+  8. What remains is that the scheduler modelled is optimistic — any pending access may be served —
+  so its depths are lower bounds on what a real controller needs, and nothing here models the bank
+  arbiter itself.</li>
+  <li><strong>A bank mapping has to be checked for coverage, not only for conflicts.</strong> One of
+  the candidates reaches only half the banks for some supports, capping bandwidth at 50% however
+  deep the queue, and the per-slice model rated it among the better ones. The two properties are
+  different and only the schedule distinguishes them.</li>
   <li><strong>Operator construction on the critical path.</strong> Fusion costs
   <span class="mono">O(8<sup>k</sup>)</span> per gate on the CPU side. For a latency-bound loop —
   the main motivation — that cost may eat the gain. Caching operators across sweeps with only the

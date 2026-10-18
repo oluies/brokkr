@@ -343,3 +343,53 @@ It assumes one access per bank per cycle with no queuing, so it bounds cycles fr
 describing a working memory controller. And it says nothing about routing amplitudes from banks to
 lanes once fetched — though the permute path's measurement, where a full Benes network cost 1.4% of
 the datapath, suggests that fabric is not where the difficulty lies.
+
+## Addendum 6: the memory controller schedule
+
+The per-slice bound assumes one access per bank per cycle and no queuing, which makes it a statement
+about a slice rather than about throughput. Slices are independent: one whose addresses pile into a
+single bank leaves the other banks idle, and the next slice can use them. So the real question is
+how much buffering a mapping costs.
+
+Bandwidth in accesses per cycle against reorder window depth, 32 banks, width-6 blocks, each mapping
+run on the support it handles worst, 14 qubits so that every slice is enumerated:
+
+```
+mapping       worst support      d=1   d=2   d=4   d=8  d=16  d=32   reachable
+low bits      5,6,7,8,9,10       1.0   2.0   4.0   8.0  16.0  32.0   32 of 32
+xor fold      0,1,5,6,10,11      4.0   8.0  16.0  32.0  32.0  32.0   32 of 32
+distinct      0,1,2,3,4,5        8.0  12.0  16.0  16.0  16.0  16.0   16 of 32
+ext. Hamming  0,1,2,3,4,5       16.0  19.1  27.3  32.0  32.0  32.0   32 of 32
+```
+
+### This softens the previous headline and sharpens it
+
+With enough slices in flight even low bits reaches full bandwidth, so its 13.6x is a **latency**
+penalty rather than a bandwidth one. It buys its way out with buffering — depth 32 against extended
+Hamming's depth 8. A slice in flight carries 64 outstanding accesses, so that is 2048 against 512:
+four times the queue for the same bandwidth.
+
+### What only the schedule could see
+
+`distinct` is capped at **half the bandwidth however deep the window**, because half the banks are
+not reachable at all. Its columns are the values 1 to 14, none of which sets the fifth bank bit, so
+the upper sixteen banks are never addressed by any access. No amount of queuing fixes a bank that is
+never asked for.
+
+The per-slice model could not see this. It measures conflicts *within* a slice and rated `distinct`
+among the better mappings, at 1.27x the floor at k=6. **Coverage and conflict are different
+properties and both have to be checked.**
+
+### A methodological note
+
+The first run sampled 256 of 16384 slices and reported `distinct` as reaching 16 banks — true of the
+run, false of the mapping, because a short prefix leaves the high address bits always zero and the
+banks they would reach never appear. The numbers above enumerate every slice. That `distinct` is
+genuinely capped is the conclusion after fixing that artifact, not before it; the artifact and the
+real effect happened to point the same way, which is the dangerous case.
+
+### Still unanswered
+
+The scheduler may serve any pending access, so it is optimistic and its depths are lower bounds on
+what real hardware needs. Nothing here models the bank arbiter, the crossbar from banks to lanes, or
+what happens when a block's operator load contends with its amplitude traffic.
