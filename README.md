@@ -373,6 +373,25 @@ its datapath does: a strided gather, a small dense complex multiply-accumulate, 
 addressing is pure bit permutation, so CUTE's `OmegaNetworkRouter` is arguably a better fit for
 quantum simulation than for convolution.
 
+## Where it ends up
+
+A state-vector engine is **not** CUTE: it needs a shuffle fabric, three datapaths and a bank mapping
+derived from coding theory, none of which a convolution engine has. A **density-matrix** engine is a
+complex GEMM machine, which is very nearly CUTE already — and measured against the same roofline it
+reaches **683 flop/byte at ten qubits** where a fused state vector reaches 15.9, while fitting on
+chip, needing no fusion pass, and having no banking problem.
+
+| qubits | ρ | flop/byte | vs unfused state vector | vs best fused |
+|---|---|---|---|---|
+| 8 | 1 MiB | 171 | 388× | 11× |
+| **10** | **16 MiB** | **683** | **1 551×** | **43×** |
+| 11 | 64 MiB | 1 365 | 3 103× | 86× |
+
+The capacity ceiling is hard and low — eleven qubits, since `4^n` grows fast — so this is an engine
+for small noisy systems rather than for scale. And if the kernel is complex GEMM, the
+quantum-specific contribution is thin: the value would be in the compiler and verification work
+rather than the datapath. Less exciting than a novel architecture, and much more defensible.
+
 ## The finding so far
 
 Gate fusion is what makes the kernel tensor-engine-shaped, and the measurements say something

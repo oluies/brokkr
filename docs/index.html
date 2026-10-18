@@ -201,6 +201,10 @@
   <p>That is the useful result, and it is not the one expected. The engine's job is not to run a
   faster dense kernel; it is to serve a <strong>mix</strong> of three datapaths in which the dense one
   is the minority.</p>
+  <p>And the assessment ends somewhere else again. Measured against the same roofline, a
+  <strong>density matrix</strong> of ten qubits reaches 683 flop/byte where a fused state vector
+  reaches 15.9 — and it fits on chip, needs no fusion pass, and has no banking problem. A
+  state-vector engine is not CUTE. A density-matrix engine very nearly is.</p>
 </div>
 
 <h2><span class="num">01</span>What CUTE actually is</h2>
@@ -513,6 +517,68 @@ all-qubit controlled gate, even a cheap one, is the pass making work for itself.
 one</strong>: a phase path with no shuffle at all, a permutation path with no multipliers, and the
 MAC array for what is genuinely dense. Sizing the MAC array for 100% of blocks would waste most of
 it.</p>
+
+<h2><span class="num">04b</span>The other problem, which is a better fit</h2>
+
+<p>This assessment has pointed at the density-matrix case twice from opposite directions — the
+arithmetic-intensity argument in section 03, and the refill model's conclusion that the engine only
+wins where the state fits on chip. It is worth measuring rather than arguing.</p>
+
+<p>The difference is structural. A state vector of <span class="mono">n</span> qubits is
+<span class="mono">2<sup>n</sup></span> amplitudes and a gate touches each once: the work is
+<em>linear in the data</em>, which is why this whole project has been a memory-bandwidth story. A
+density matrix is <span class="mono">4<sup>n</sup></span> entries and a channel is
+<span class="mono">ρ → Σ K ρ K†</span> — two matrix products per Kraus operator, so the work is
+<span class="mono">O(8<sup>n</sup>)</span> against <span class="mono">O(4<sup>n</sup>)</span> of
+data. <strong>The arithmetic per byte grows with the system</strong> instead of sitting at 0.44.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>A depolarizing channel, four Kraus operators. The state-vector figures are this
+  project's own: 0.44 flop/byte unfused, 15.9 at a fusion width of six.
+  <code>model.runMain brokkr.model.DensityCost</code>.</caption>
+  <thead><tr>
+    <th>qubits</th><th>dimension</th><th>ρ</th><th>flop/byte</th><th>vs unfused</th><th>vs k=6</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>6</td><td>64</td><td>64 KiB</td><td>43</td><td>97×</td><td>3×</td></tr>
+    <tr><td>8</td><td>256</td><td>1 MiB</td><td>171</td><td>388×</td><td>11×</td></tr>
+    <tr class="hi"><td>10</td><td>1024</td><td>16 MiB</td><td><strong>683</strong></td><td>1 551×</td><td><strong>43×</strong></td></tr>
+    <tr class="hi"><td>11</td><td>2048</td><td>64 MiB</td><td>1 365</td><td>3 103×</td><td>86×</td></tr>
+    <tr><td>12</td><td>4096</td><td>256 MiB</td><td>2 731</td><td>6 206×</td><td>172×</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Measured on Scotty's density layer, the intensity comes out as the model predicts — 5, 11, 21,
+43, 85 flop/byte at three through seven qubits, doubling per qubit. (The throughput alongside it,
+peaking at 7.3 Gflop/s, is a JVM running a textbook cubic matrix product; it validates the intensity
+figure, not any achievable rate.)</p>
+
+<div class="verdict">
+  <span class="label cool">Every problem in this assessment disappears</span>
+  <p><strong>Banking.</strong> A matrix product has regular dense access. No bit-permutation stride,
+  so none of the coding theory in section 08 applies — it is ordinary GEMM blocking, which is
+  solved.</p>
+  <p><strong>Fusion, and its host cost.</strong> The operators are the Kraus set. Nothing to fuse,
+  nothing to classify, no 116 µs per block, no cap at <span class="mono">k = 5</span>.</p>
+  <p><strong>Refill.</strong> At ten qubits ρ is 16 MiB and fits on chip. Nothing spills, so none of
+  the 20-to-44× traffic.</p>
+  <p><strong>The three datapaths.</strong> There is one, a MAC array, and it is busy.</p>
+</div>
+
+<p>And here is the part that answers the original question most directly. A state-vector engine is
+<em>not</em> CUTE — it needs a shuffle fabric, three datapaths and a bank mapping derived from
+coding theory, none of which a convolution engine has. A density-matrix engine is a complex GEMM
+machine, which is <strong>very nearly CUTE already</strong>: adapt <code>MatrixTE</code> and
+<code>ReducePE</code> to complex arithmetic, keep <code>ABMatrixReg</code>, keep the Omega fabric
+for operand staging, and most of the design carries over unchanged.</p>
+
+<p>Two honest caveats. The capacity ceiling is hard and low — eleven qubits, because
+<span class="mono">4<sup>n</sup></span> grows fast — so this is an engine for small noisy systems,
+not for scale. And if the kernel is complex GEMM, then the quantum-specific contribution is thin:
+much of the value would be in the surrounding compiler and verification work rather than in the
+datapath. That is a less exciting claim than a novel architecture, and a much more defensible one.</p>
 
 <h2><span class="num">05</span>The capacity ceiling</h2>
 
