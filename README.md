@@ -404,11 +404,28 @@ The datapath is checked at depths 4, 8, 16 and 32, with deviation flat at 2.1–
 the depth costs nothing**, because the accumulator is widened and narrowed only on the way out —
 which is what licenses running the same design to the depth `2^n` a ten-qubit channel needs.
 
-**Scope, stated plainly:** all of this runs at dimension four. `ChannelEngine` holds the dimension
-equal to the tile, so it *cannot* run at the ten or eleven qubits this project argues for — that
-would be a 1024-wide tile. Reaching those sizes needs a loop over output tiles with the intermediate
-in a memory. So: **verified at dimension four, argued to 1024.** Separately, Scotty's `erasure`
-channel is 2→3 and this engine assumes square, which is a gap on a channel `pctc` actually uses.
+**Tiling.** The dimension is independent of the array: the engine loops over `(dimension/tile)²`
+output blocks, each accumulating over the full inner dimension. Measured at tile 4:
+
+| dimension | blocks per product | cycles per Kraus operator |
+|---|---|---|
+| 4 | 1 | 10 |
+| 8 | 4 | **72** |
+
+Both are `2·(N/T)²·(N+1)`, so cycles grow as `N³/T²` — the arithmetic of the product, not control
+overhead. This is also what makes the widened accumulator load-bearing: a block's accumulation is
+now `dimension` deep, not `tile` deep.
+
+**The limit moved and became a different one.** The array stays 322 347 cells whatever the
+dimension; the engine around it was 6% of that at dimension 4 and is **24% at dimension 8**, because
+the state, Kraus set, intermediate and accumulator all grew fourfold while the multipliers did not.
+That share is mostly address muxing on register files — so **the next change is storage, not
+control**. At ten qubits ρ alone is 16 MiB: preposterous in registers, ordinary in SRAM, and the
+control above it would not change.
+
+So: **verified at dimension eight, with the loop that reaches further.** What stands between this
+and ten qubits is a memory, not an idea. Separately, Scotty's `erasure` channel is 2→3 and this
+engine assumes square, which is a gap on a channel `pctc` actually uses.
 
 It costs 342 351 cells against `ComplexGemm`'s 322 347, so **storage, sequencing and accumulation
 are 6%** on top of the multiplier array.

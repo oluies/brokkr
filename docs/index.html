@@ -663,41 +663,72 @@ only on the way out, so a depth-32 product rounds once rather than thirty-two ti
 licenses running the same design to the depth <span class="mono">2<sup>n</sup></span> a ten-qubit
 channel needs. Had the error climbed with depth, it could not be.</p>
 
-<div class="verdict">
-  <span class="label hot">What is verified, and at what size</span>
-  <p>All of this runs at <strong>dimension four</strong> — two qubits — because
-  <code>ChannelEngine</code> holds the dimension equal to the tile. The engine as built
-  <em>cannot</em> run at the ten or eleven qubits this assessment argues for: that would be a
-  1024-wide tile, some twenty million cells of multiplier. Reaching those sizes needs a loop over
-  output tiles with the intermediate in a memory rather than in registers, which is control work
-  this does not have.</p>
-  <p>So the honest statement is <strong>verified at dimension four, argued to 1024</strong>. The
-  arithmetic generalises — the depth sweep above is the evidence for that — but the engine does
-  not, yet.</p>
-  <p>One capability gap alongside it: Scotty's <strong>erasure</strong> channel maps dimension 2 to
-  dimension 3, and this engine assumes ρ, K and the result are all the same square size. That is a
-  channel <code>pctc</code> uses, so it is a gap on the motivating workload rather than on an exotic
-  case.</p>
-</div>
+<h3>Tiling</h3>
 
-<p>Forty-four cycles is eleven per Kraus operator: four for each matrix product, and three for
-capture, accumulate and sequencing. So 73% of cycles do arithmetic at this size, and the fixed three
-amortise as the dimension grows — 91% at sixteen.</p>
+<p>An earlier version held the dimension equal to the tile, which made the control a counter and
+capped the engine at whatever width of multiplier array one is willing to build — ten qubits would
+have meant a 1024-wide tile. The dimension is now independent: the engine loops over
+<span class="mono">(dimension / tile)²</span> output blocks, each accumulating over the full
+<span class="mono">dimension</span>-long inner dimension before being written out.</p>
+
+<p>That is what makes <code>ComplexGemm</code>'s widened accumulator load-bearing rather than tidy. A block's
+accumulation is now <span class="mono">dimension</span> deep, not <span class="mono">tile</span>
+deep, and the depth sweep above is the evidence that it costs nothing.</p>
 
 <div class="tablewrap">
 <table class="narrow">
-  <caption>The engine against its own datapath.</caption>
-  <thead><tr><th>module</th><th>cells</th><th class="note">what it adds</th></tr></thead>
+  <caption>Measured on the same engine, tile 4. Eighteen cases now: three channels, three states,
+  at both dimensions.</caption>
+  <thead><tr>
+    <th>dimension</th><th>blocks per product</th><th>cycles per Kraus operator</th>
+  </tr></thead>
   <tbody>
-    <tr><td>ComplexGemm</td><td>322 347</td><td class="note">the multiplier array</td></tr>
-    <tr class="hi"><td>ChannelEngine</td><td><strong>342 351</strong></td><td class="note">+6% for storage, sequencing and accumulation</td></tr>
+    <tr><td>4</td><td>1</td><td>10</td></tr>
+    <tr class="hi"><td>8</td><td>4</td><td><strong>72</strong></td></tr>
   </tbody>
 </table>
 </div>
 
-<p><strong>Control and storage cost six percent.</strong> Which is the same lesson as the per-MAC
-table below, arriving from a different direction: in a design like this the multipliers are the
-design, and everything around them is rounding error.</p>
+<p>Ten against seventy-two is <span class="mono">2 · (N/T)² · (N+1)</span> in both cases — cycles
+grow as <span class="mono">N³/T²</span>, which is the arithmetic of the product rather than anything
+the control adds. Over eighteen cases the worst deviation from Scotty is
+1.1 × 10<sup>-6</sup>, the worst trace error 5.7 × 10<sup>-6</sup>, the worst Hermitian asymmetry
+1.9 × 10<sup>-6</sup>.</p>
+
+<div class="verdict">
+  <span class="label hot">The limit moved, and became a different one</span>
+  <p>The array stays 322 347 cells whatever the dimension. The engine around it was 6% of that at
+  dimension four and is <strong>24% at dimension eight</strong> — because the state, the Kraus set,
+  the intermediate and the accumulator all grew fourfold while the multipliers did not.</p>
+  <p>That share is mostly address muxing on register files, and it is why the next change is not
+  control but <strong>storage</strong>. At ten qubits ρ alone is 16 MiB; held in registers with
+  dynamic indexing it would be preposterous, and in SRAM it is ordinary. The control above it would
+  not change — which is the useful thing tiling established.</p>
+  <p>So the honest statement is now <strong>verified at dimension eight, with the loop that reaches
+  further</strong>, rather than verified at one tile. What stands between this and ten qubits is a
+  memory, not an idea.</p>
+</div>
+
+<p>One capability gap remains alongside it: Scotty's <strong>erasure</strong> channel maps dimension
+2 to dimension 3, and this engine assumes ρ, K and the result are all the same square size. That is
+a channel <code>pctc</code> uses, so it is a gap on the motivating workload rather than an exotic
+case.</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>The engine against its own datapath, at two dimensions with the same tile.</caption>
+  <thead><tr><th>module</th><th>cells</th><th class="note">what it adds</th></tr></thead>
+  <tbody>
+    <tr><td>ComplexGemm, tile 4</td><td>322 347</td><td class="note">the multiplier array</td></tr>
+    <tr><td>ChannelEngine, dim 4</td><td>342 351</td><td class="note">+6%</td></tr>
+    <tr class="hi"><td>ChannelEngine, dim 8</td><td><strong>426 119</strong></td><td class="note">+24%, all of it storage</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>At dimension four the multipliers were the design and everything else was rounding error, which
+is the same lesson as the per-MAC table below. At dimension eight that is already less true, and it
+goes on becoming less true: the array is fixed and the storage is not.</p>
 
 <div class="verdict">
   <span class="label cool">The cleanest number in this assessment</span>

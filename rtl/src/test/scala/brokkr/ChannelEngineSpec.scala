@@ -23,16 +23,21 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
   val FractionBits = Fixed.fractionBits(DataWidth)
   val Scale = BigDecimal(BigInt(1) << FractionBits)
 
+  val Tile = 4
+
   case class Case(
       index: Int,
       name: String,
       krausCount: Int,
+      dimension: Int,
       rho: Seq[(Double, Double)],
       kraus: Seq[Seq[(Double, Double)]],
       expected: Seq[(Double, Double)]
-  )
+  ) {
+    def tiled: Boolean = dimension > Tile
+  }
 
-  lazy val (dimension, cases) = {
+  lazy val cases: Seq[Case] = {
     val stream = getClass.getResourceAsStream("/channel-vectors.txt")
     require(stream != null, "channel-vectors.txt is missing; regenerate it with vectors.runMain")
 
@@ -41,9 +46,7 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
       .map(_.trim.split("\\s+").toSeq)
       .toSeq
 
-    val d = fields.find(_.head == "dimension").get(1).toInt
-
-    def matrix(label: String, caseIndex: Int, operator: Int): Seq[(Double, Double)] =
+    def matrix(label: String, caseIndex: Int, operator: Int, d: Int): Seq[(Double, Double)] =
       (0 until d).flatMap { row =>
         val entries = fields
           .find(f =>
@@ -56,21 +59,21 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
         (0 until d).map(col => (entries(2 * col), entries(2 * col + 1)))
       }
 
-    val parsed = fields.filter(_.head == "case").map { f =>
+    fields.filter(_.head == "case").map { f =>
       val index = f(1).toInt
       val count = f(3).toInt
+      val d = f(4).toInt
 
       Case(
         index,
         f(2),
         count,
-        matrix("rho", index, 0),
-        (0 until count).map(matrix("k", index, _)),
-        matrix("result", index, 0)
+        d,
+        matrix("rho", index, 0, d),
+        (0 until count).map(matrix("k", index, _, d)),
+        matrix("result", index, 0, d)
       )
     }
-
-    (d, parsed)
   }
 
   def fixed(value: Double): BigInt =
@@ -81,10 +84,11 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
   /** Every case run once, since a simulation per property would be three times the Verilator
     * builds for the same information.
     */
-  lazy val results: Map[Int, Seq[(Double, Double)]] = cases.map { c =>
+  lazy val runs: Map[Int, (Seq[(Double, Double)], Int)] = cases.map { c =>
     var out = Seq.empty[(Double, Double)]
+    var taken = 0
 
-    simulate(new ChannelEngine(dimension, c.krausCount, DataWidth)) { dut =>
+    simulate(new ChannelEngine(c.dimension, c.krausCount, DataWidth, Tile)) { dut =>
       c.rho.zipWithIndex.foreach { case ((re, im), address) =>
         dut.io.writeEnable.poke(true.B)
         dut.io.writeKraus.poke(false.B)
@@ -98,7 +102,7 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
         operator.zipWithIndex.foreach { case ((re, im), cell) =>
           dut.io.writeEnable.poke(true.B)
           dut.io.writeKraus.poke(true.B)
-          dut.io.writeAddr.poke((index * dimension * dimension + cell).U)
+          dut.io.writeAddr.poke((index * c.dimension * c.dimension + cell).U)
           dut.io.writeRe.poke(fixed(re).S)
           dut.io.writeIm.poke(fixed(im).S)
           dut.clock.step()
@@ -112,28 +116,33 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
 
       var cycles = 0
 
-      while (!dut.io.done.peek().litToBoolean && cycles < 1000) {
+      while (!dut.io.done.peek().litToBoolean && cycles < 20000) {
         dut.clock.step()
         cycles += 1
       }
 
       assert(dut.io.done.peek().litToBoolean, s"case ${c.index} did not finish in $cycles cycles")
 
-      out = (0 until dimension * dimension).map { cell =>
+      taken = cycles
+      out = (0 until c.dimension * c.dimension).map { cell =>
         (real(dut.io.outRe(cell).peek().litValue), real(dut.io.outIm(cell).peek().litValue))
       }
     }
 
-    c.index -> out
+    c.index -> (out, taken)
   }.toMap
 
+  lazy val results: Map[Int, Seq[(Double, Double)]] = runs.view.mapValues(_._1).toMap
+
   "the vectors" should "cover several channels and several states each" in {
-    assert(cases.length == 9, s"expected nine cases, found ${cases.length}")
+    assert(cases.length == 18, s"expected eighteen cases, found ${cases.length}")
+    assert(cases.exists(_.tiled), "some cases should force the engine to loop over tiles")
+    assert(cases.exists(!_.tiled), "some cases should fit in one tile")
     assert(cases.map(_.name).distinct.length == 3)
     assert(cases.map(_.krausCount).distinct.length > 1, "the cases should differ in Kraus count")
 
     cases.foreach { c =>
-      val trace = (0 until dimension).map(i => c.rho(i * dimension + i)._1).sum
+      val trace = (0 until c.dimension).map(i => c.rho(i * c.dimension + i)._1).sum
 
       withClue(s"case ${c.index} (${c.name}) input: ") {
         assert(math.abs(trace - 1.0) < 1e-9)
@@ -149,7 +158,7 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
         case (((gotRe, gotIm), (wantRe, wantIm)), cell) =>
           worst = worst.max(math.abs(gotRe - wantRe)).max(math.abs(gotIm - wantIm))
 
-          withClue(s"case ${c.index} (${c.name}) cell ${cell / dimension},${cell % dimension}: ") {
+          withClue(s"case ${c.index} (${c.name}, dim ${c.dimension}) cell ${cell / c.dimension},${cell % c.dimension}: ") {
             assert(math.abs(gotRe - wantRe) < 1e-5)
             assert(math.abs(gotIm - wantIm) < 1e-5)
           }
@@ -163,7 +172,7 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
     var worst = 0.0
 
     cases.foreach { c =>
-      val trace = (0 until dimension).map(i => results(c.index)(i * dimension + i)._1).sum
+      val trace = (0 until c.dimension).map(i => results(c.index)(i * c.dimension + i)._1).sum
 
       worst = worst.max(math.abs(trace - 1.0))
 
@@ -179,9 +188,9 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
     var worst = 0.0
 
     cases.foreach { c =>
-      for (row <- 0 until dimension; col <- 0 until dimension) {
-        val (re, im) = results(c.index)(row * dimension + col)
-        val (mirrorRe, mirrorIm) = results(c.index)(col * dimension + row)
+      for (row <- 0 until c.dimension; col <- 0 until c.dimension) {
+        val (re, im) = results(c.index)(row * c.dimension + col)
+        val (mirrorRe, mirrorIm) = results(c.index)(col * c.dimension + row)
 
         worst = worst.max(math.abs(re - mirrorRe)).max(math.abs(im + mirrorIm))
 
@@ -193,6 +202,30 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
     }
 
     info(f"worst Hermitian asymmetry over ${cases.length} cases: $worst%.3e")
+  }
+
+  it should "loop over tiles when the state is wider than the array" in {
+    // The cost of tiling is the point: a matrix product is (dimension/tile)^2 blocks of
+    // `dimension` accumulations each, so cycles grow as dimension^3 / tile^2. At tile 4 the
+    // dimension-8 cases do four blocks per product where the dimension-4 cases do one.
+    val byDimension = cases
+      .groupBy(_.dimension)
+      .view
+      .mapValues(group => group.map(c => runs(c.index)._2 / c.krausCount).distinct.sorted)
+      .toMap
+
+    byDimension.toSeq.sortBy(_._1).foreach { case (dimension, perKraus) =>
+      val blocks = (dimension / Tile) * (dimension / Tile)
+
+      info(s"dimension $dimension: $blocks block(s) per product, ${perKraus.mkString("/")} cycles per Kraus operator")
+    }
+
+    val small = byDimension(4).head
+    val large = byDimension(8).head
+
+    // Eight times the work — twice the depth, four times the blocks, in each of two products.
+    assert(large > small * 5, s"dimension 8 took $large cycles per operator against $small at 4")
+    assert(cases.filter(_.tiled).forall(c => runs(c.index)._2 > 0))
   }
 
   it should "handle channels with different Kraus counts" in {

@@ -1120,3 +1120,51 @@ argued to 1024.** The arithmetic generalises, as the depth sweep shows; the engi
 assumes rho, K and the result are all the same square size, so it cannot express erasure at all —
 a channel `pctc` uses alongside depolarizing and amplitude damping. A gap on the motivating
 workload, not an exotic case.
+
+
+## Addendum 21: tiling
+
+The engine held the dimension equal to the tile, which made the control a counter and capped it at
+whatever width of multiplier array one is willing to build — ten qubits would have been a 1024-wide
+tile. Now the dimension is independent: the engine loops over `(dimension/tile)²` output blocks,
+each accumulating over the full `dimension`-long inner dimension before being written out.
+
+Measured at tile 4, over eighteen cases — three channels, three states, at both dimensions:
+
+```
+dimension   blocks per product   cycles per Kraus operator
+        4                    1                          10
+        8                    4                          72
+
+worst deviation from Scotty over 18 cases:   1.133e-06
+worst trace error over 18 cases:             5.722e-06
+worst Hermitian asymmetry over 18 cases:     1.907e-06
+```
+
+Ten and seventy-two are both `2·(N/T)²·(N+1)`, so cycles grow as `N³/T²` — the arithmetic of the
+product rather than anything the control adds.
+
+This is also what makes the widened accumulator load-bearing rather than tidy. A block's
+accumulation is now `dimension` deep, not `tile` deep, and addendum 20's depth sweep is the evidence
+that costs nothing.
+
+### The limit moved, and became a different one
+
+```
+ComplexGemm, tile 4      322347 cells
+ChannelEngine, dim 4     342351 cells   +6%
+ChannelEngine, dim 8     426119 cells   +24%, all of it storage
+```
+
+The array is fixed whatever the dimension. The engine around it was 6% at dimension four and is 24%
+at dimension eight, because the state, the Kraus set, the intermediate and the accumulator all grew
+fourfold while the multipliers did not. That share is mostly address muxing on register files.
+
+**So the next change is storage, not control.** At ten qubits rho alone is 16 MiB: preposterous held
+in registers with dynamic indexing, ordinary in SRAM, and the control above it would not change —
+which is the useful thing tiling established.
+
+Verified at dimension eight, with the loop that reaches further. What stands between this and ten
+qubits is a memory, not an idea.
+
+Erasure remains unsupported: 2 -> 3, and this engine assumes square throughout.
