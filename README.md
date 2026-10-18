@@ -393,11 +393,22 @@ for small noisy systems rather than for scale. And if the kernel is complex GEMM
 quantum-specific contribution is thin: the value would be in the compiler and verification work
 rather than the datapath. Less exciting than a novel architecture, and much more defensible.
 
-**`ChannelEngine` applies a full Kraus channel**, checked against Scotty on a depolarizing channel
-over a two-qubit state: 44 cycles, worst deviation **9.9e-07**, **trace preserved at 0.999997**, and
-Hermitian symmetry holding to 1e-05. The last two are properties of the physics rather than of the
-reference — a transposed index or a dropped conjugation would break them even if an element-wise
-comparison somehow passed.
+**`ChannelEngine` applies a full Kraus channel**, checked against Scotty across three channels and
+three random states each — depolarizing, amplitude damping and dephasing, with Kraus counts of 4, 2
+and 2. Worst over all nine cases: deviation **9.9e-07**, trace error **2.9e-06**, Hermitian
+asymmetry **1.4e-06**. The last two are properties of the physics rather than of the reference — a
+transposed index or a dropped conjugation would break them even if an element-wise comparison
+somehow passed.
+
+The datapath is checked at depths 4, 8, 16 and 32, with deviation flat at 2.1–2.9e-07. **Eight times
+the depth costs nothing**, because the accumulator is widened and narrowed only on the way out —
+which is what licenses running the same design to the depth `2^n` a ten-qubit channel needs.
+
+**Scope, stated plainly:** all of this runs at dimension four. `ChannelEngine` holds the dimension
+equal to the tile, so it *cannot* run at the ten or eleven qubits this project argues for — that
+would be a 1024-wide tile. Reaching those sizes needs a loop over output tiles with the intermediate
+in a memory. So: **verified at dimension four, argued to 1024.** Separately, Scotty's `erasure`
+channel is 2→3 and this engine assumes square, which is a gap on a channel `pctc` actually uses.
 
 It costs 342 351 cells against `ComplexGemm`'s 322 347, so **storage, sequencing and accumulation
 are 6%** on top of the multiplier array.

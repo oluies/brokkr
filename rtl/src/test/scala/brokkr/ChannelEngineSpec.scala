@@ -5,23 +5,34 @@ import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.io.Source
 
-/** Runs a whole Kraus channel through the hardware and compares it with Scotty.
+/** Runs every channel and state in the vector set through the hardware.
   *
-  * This is the end-to-end check the project has been building toward: not a kernel against a matrix
-  * product, but `rho -> sum K rho K†` against the simulator's own `Channel.apply`, on a real
-  * depolarizing channel and a real state.
+  * The engine was first checked on one channel and one state, which was thin for the thing the
+  * assessment rests on — the state-vector path it is compared against is checked against randomised
+  * circuits over the whole gate set. This closes that: three channels with different Kraus
+  * structures and counts, three random states each.
   *
-  * The physical properties are checked as well as the numbers. A channel is trace preserving, so
-  * the output's trace must still be one; and the result must still be Hermitian. Those would catch
-  * a transposed index or a conjugation dropped in the second product, which an element-wise
-  * comparison against a reference might survive if the reference were wrong in the same way.
+  * Three properties are asserted on every case, and the last two matter most. A channel is trace
+  * preserving and maps Hermitian states to Hermitian states, so those hold regardless of what the
+  * reference says — a transposed index or a conjugation dropped from the second product breaks them
+  * even if the element-wise comparison somehow passes. They are the closest thing here to a check
+  * that does not depend on the golden model.
   */
 class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
   val DataWidth = 24
   val FractionBits = Fixed.fractionBits(DataWidth)
   val Scale = BigDecimal(BigInt(1) << FractionBits)
 
-  lazy val (dimension, krausCount, rho, kraus, expected) = {
+  case class Case(
+      index: Int,
+      name: String,
+      krausCount: Int,
+      rho: Seq[(Double, Double)],
+      kraus: Seq[Seq[(Double, Double)]],
+      expected: Seq[(Double, Double)]
+  )
+
+  lazy val (dimension, cases) = {
     val stream = getClass.getResourceAsStream("/channel-vectors.txt")
     require(stream != null, "channel-vectors.txt is missing; regenerate it with vectors.runMain")
 
@@ -31,20 +42,35 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
       .toSeq
 
     val d = fields.find(_.head == "dimension").get(1).toInt
-    val m = fields.find(_.head == "kraus").get(1).toInt
 
-    def matrix(label: String, index: Int): Seq[(Double, Double)] =
+    def matrix(label: String, caseIndex: Int, operator: Int): Seq[(Double, Double)] =
       (0 until d).flatMap { row =>
         val entries = fields
-          .find(f => f.head == label && f(1).toInt == index && f(2).toInt == row)
-          .get(3)
+          .find(f =>
+            f.head == label && f(1).toInt == caseIndex && f(2).toInt == operator && f(3).toInt == row
+          )
+          .getOrElse(sys.error(s"missing $label for case $caseIndex operator $operator row $row"))(4)
           .split(",")
           .map(_.toDouble)
 
         (0 until d).map(col => (entries(2 * col), entries(2 * col + 1)))
       }
 
-    (d, m, matrix("rho", 0), (0 until m).map(matrix("k", _)), matrix("result", 0))
+    val parsed = fields.filter(_.head == "case").map { f =>
+      val index = f(1).toInt
+      val count = f(3).toInt
+
+      Case(
+        index,
+        f(2),
+        count,
+        matrix("rho", index, 0),
+        (0 until count).map(matrix("k", index, _)),
+        matrix("result", index, 0)
+      )
+    }
+
+    (d, parsed)
   }
 
   def fixed(value: Double): BigInt =
@@ -52,102 +78,131 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
 
   def real(value: BigInt): Double = (BigDecimal(value) / Scale).toDouble
 
-  def load(dut: ChannelEngine): Unit = {
-    rho.zipWithIndex.foreach { case ((re, im), address) =>
-      dut.io.writeEnable.poke(true.B)
-      dut.io.writeKraus.poke(false.B)
-      dut.io.writeAddr.poke(address.U)
-      dut.io.writeRe.poke(fixed(re).S)
-      dut.io.writeIm.poke(fixed(im).S)
-      dut.clock.step()
-    }
+  /** Every case run once, since a simulation per property would be three times the Verilator
+    * builds for the same information.
+    */
+  lazy val results: Map[Int, Seq[(Double, Double)]] = cases.map { c =>
+    var out = Seq.empty[(Double, Double)]
 
-    kraus.zipWithIndex.foreach { case (operator, index) =>
-      operator.zipWithIndex.foreach { case ((re, im), cell) =>
+    simulate(new ChannelEngine(dimension, c.krausCount, DataWidth)) { dut =>
+      c.rho.zipWithIndex.foreach { case ((re, im), address) =>
         dut.io.writeEnable.poke(true.B)
-        dut.io.writeKraus.poke(true.B)
-        dut.io.writeAddr.poke((index * dimension * dimension + cell).U)
+        dut.io.writeKraus.poke(false.B)
+        dut.io.writeAddr.poke(address.U)
         dut.io.writeRe.poke(fixed(re).S)
         dut.io.writeIm.poke(fixed(im).S)
         dut.clock.step()
       }
-    }
 
-    dut.io.writeEnable.poke(false.B)
-  }
-
-  def run(dut: ChannelEngine): Seq[(Double, Double)] = {
-    load(dut)
-
-    dut.io.start.poke(true.B)
-    dut.clock.step()
-    dut.io.start.poke(false.B)
-
-    var cycles = 0
-
-    while (!dut.io.done.peek().litToBoolean && cycles < 1000) {
-      dut.clock.step()
-      cycles += 1
-    }
-
-    assert(dut.io.done.peek().litToBoolean, s"the engine did not finish in $cycles cycles")
-    info(s"channel applied in $cycles cycles")
-
-    (0 until dimension * dimension).map { cell =>
-      (real(dut.io.outRe(cell).peek().litValue), real(dut.io.outIm(cell).peek().litValue))
-    }
-  }
-
-  "the vectors" should "describe a real channel and a real state" in {
-    assert(dimension == 4 && krausCount == 4)
-    assert(rho.length == 16 && kraus.forall(_.length == 16))
-
-    val trace = (0 until dimension).map(i => rho(i * dimension + i)._1).sum
-
-    assert(math.abs(trace - 1.0) < 1e-9, s"rho should have unit trace, has $trace")
-  }
-
-  "ChannelEngine" should "reproduce Scotty's channel" in {
-    simulate(new ChannelEngine(4, 4, DataWidth)) { dut =>
-      val got = run(dut)
-      var worst = 0.0
-
-      got.zip(expected).zipWithIndex.foreach { case (((gotRe, gotIm), (wantRe, wantIm)), cell) =>
-        worst = worst.max(math.abs(gotRe - wantRe)).max(math.abs(gotIm - wantIm))
-
-        withClue(s"cell ${cell / dimension},${cell % dimension}: ") {
-          assert(math.abs(gotRe - wantRe) < 1e-5)
-          assert(math.abs(gotIm - wantIm) < 1e-5)
+      c.kraus.zipWithIndex.foreach { case (operator, index) =>
+        operator.zipWithIndex.foreach { case ((re, im), cell) =>
+          dut.io.writeEnable.poke(true.B)
+          dut.io.writeKraus.poke(true.B)
+          dut.io.writeAddr.poke((index * dimension * dimension + cell).U)
+          dut.io.writeRe.poke(fixed(re).S)
+          dut.io.writeIm.poke(fixed(im).S)
+          dut.clock.step()
         }
       }
 
-      info(f"worst deviation from Scotty over ${dimension * dimension} cells: $worst%.3e")
+      dut.io.writeEnable.poke(false.B)
+      dut.io.start.poke(true.B)
+      dut.clock.step()
+      dut.io.start.poke(false.B)
+
+      var cycles = 0
+
+      while (!dut.io.done.peek().litToBoolean && cycles < 1000) {
+        dut.clock.step()
+        cycles += 1
+      }
+
+      assert(dut.io.done.peek().litToBoolean, s"case ${c.index} did not finish in $cycles cycles")
+
+      out = (0 until dimension * dimension).map { cell =>
+        (real(dut.io.outRe(cell).peek().litValue), real(dut.io.outIm(cell).peek().litValue))
+      }
+    }
+
+    c.index -> out
+  }.toMap
+
+  "the vectors" should "cover several channels and several states each" in {
+    assert(cases.length == 9, s"expected nine cases, found ${cases.length}")
+    assert(cases.map(_.name).distinct.length == 3)
+    assert(cases.map(_.krausCount).distinct.length > 1, "the cases should differ in Kraus count")
+
+    cases.foreach { c =>
+      val trace = (0 until dimension).map(i => c.rho(i * dimension + i)._1).sum
+
+      withClue(s"case ${c.index} (${c.name}) input: ") {
+        assert(math.abs(trace - 1.0) < 1e-9)
+      }
     }
   }
 
-  it should "preserve the trace, as a channel must" in {
-    simulate(new ChannelEngine(4, 4, DataWidth)) { dut =>
-      val got = run(dut)
-      val trace = (0 until dimension).map(i => got(i * dimension + i)._1).sum
+  "ChannelEngine" should "reproduce Scotty on every channel and state" in {
+    var worst = 0.0
 
-      info(f"trace of the result: $trace%.6f")
-      assert(math.abs(trace - 1.0) < 1e-4, f"a channel must preserve the trace, got $trace%.6f")
+    cases.foreach { c =>
+      results(c.index).zip(c.expected).zipWithIndex.foreach {
+        case (((gotRe, gotIm), (wantRe, wantIm)), cell) =>
+          worst = worst.max(math.abs(gotRe - wantRe)).max(math.abs(gotIm - wantIm))
+
+          withClue(s"case ${c.index} (${c.name}) cell ${cell / dimension},${cell % dimension}: ") {
+            assert(math.abs(gotRe - wantRe) < 1e-5)
+            assert(math.abs(gotIm - wantIm) < 1e-5)
+          }
+      }
     }
+
+    info(f"worst deviation from Scotty over ${cases.length} cases: $worst%.3e")
   }
 
-  it should "produce a Hermitian result, as a channel must" in {
-    simulate(new ChannelEngine(4, 4, DataWidth)) { dut =>
-      val got = run(dut)
+  it should "preserve the trace on every case, as a channel must" in {
+    var worst = 0.0
 
+    cases.foreach { c =>
+      val trace = (0 until dimension).map(i => results(c.index)(i * dimension + i)._1).sum
+
+      worst = worst.max(math.abs(trace - 1.0))
+
+      withClue(s"case ${c.index} (${c.name}): ") {
+        assert(math.abs(trace - 1.0) < 1e-4, f"trace is $trace%.6f")
+      }
+    }
+
+    info(f"worst trace error over ${cases.length} cases: $worst%.3e")
+  }
+
+  it should "produce Hermitian results on every case, as a channel must" in {
+    var worst = 0.0
+
+    cases.foreach { c =>
       for (row <- 0 until dimension; col <- 0 until dimension) {
-        val (re, im) = got(row * dimension + col)
-        val (mirrorRe, mirrorIm) = got(col * dimension + row)
+        val (re, im) = results(c.index)(row * dimension + col)
+        val (mirrorRe, mirrorIm) = results(c.index)(col * dimension + row)
 
-        withClue(s"($row,$col) against ($col,$row): ") {
+        worst = worst.max(math.abs(re - mirrorRe)).max(math.abs(im + mirrorIm))
+
+        withClue(s"case ${c.index} (${c.name}), ($row,$col) against ($col,$row): ") {
           assert(math.abs(re - mirrorRe) < 1e-5)
           assert(math.abs(im + mirrorIm) < 1e-5)
         }
       }
     }
+
+    info(f"worst Hermitian asymmetry over ${cases.length} cases: $worst%.3e")
+  }
+
+  it should "handle channels with different Kraus counts" in {
+    // Four operators for depolarizing, two for the others. The sequencing is a counter over them,
+    // so a case with a different count exercises a different path through the state machine.
+    val counts = cases.map(c => c.name -> c.krausCount).distinct.toMap
+
+    assert(counts("depolarizing") == 4)
+    assert(counts("amplitudeDamping") == 2)
+    assert(counts("dephasing") == 2)
+    info(s"Kraus counts exercised: ${counts.values.toSeq.distinct.sorted.mkString(", ")}")
   }
 }

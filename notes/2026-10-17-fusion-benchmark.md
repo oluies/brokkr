@@ -1068,3 +1068,55 @@ their published figures stand.
 That is the third time in these notes a number has looked wrong and been wrong. The pattern worth
 keeping is the one that caught it: a result that contradicts something already known — here, a
 container smaller than its contents — is worth more suspicion than a result that merely surprises.
+
+
+## Addendum 20: property-based tests for the engine
+
+The engine was verified on one channel and one state, which was thin for the thing the whole
+assessment rests on — the state-vector path it is compared against is checked against randomised
+circuits over the entire gate set. Closed.
+
+### Three channels, three states each
+
+```
+worst deviation from Scotty over 9 cases:   9.926e-07
+worst trace error over 9 cases:             2.861e-06
+worst Hermitian asymmetry over 9 cases:     1.431e-06
+Kraus counts exercised:                     2, 4
+```
+
+Depolarizing (4 Kraus, unitary-weighted), amplitude damping (2, non-unitary) and dephasing (2,
+diagonal) — different structures as well as different counts, so the sequencing counter takes more
+than one path.
+
+Trace preservation and Hermiticity are the valuable assertions. They are properties of the physics
+rather than of the reference: a transposed index or a conjugation dropped from the second product
+breaks them even if the element-wise comparison passes.
+
+### The depth sweep pins the scalability claim
+
+```
+depth   4: worst deviation 2.108e-07
+depth   8: worst deviation 2.865e-07
+depth  16: worst deviation 2.365e-07
+depth  32: worst deviation 2.392e-07
+```
+
+**Eight times the depth costs nothing.** The accumulator is widened and narrowed only on the way
+out, so a depth-32 product rounds once rather than thirty-two times. That is the claim that licenses
+running this design to the depth `2^n` a ten-qubit channel needs, and it is now measured rather than
+asserted — had the error climbed with depth, the whole density-matrix argument would need a
+different datapath.
+
+### Two gaps, recorded rather than hidden
+
+**Dimension.** All of this runs at dimension four. `ChannelEngine` holds the dimension equal to the
+tile, so it cannot run at the ten or eleven qubits the assessment argues for — that would be a
+1024-wide tile, some twenty million cells of multiplier. Reaching those sizes needs a loop over
+output tiles with the intermediate in a memory rather than registers. **Verified at dimension four,
+argued to 1024.** The arithmetic generalises, as the depth sweep shows; the engine does not, yet.
+
+**Non-square channels.** Scotty's erasure channel maps dimension 2 to dimension 3. This engine
+assumes rho, K and the result are all the same square size, so it cannot express erasure at all —
+a channel `pctc` uses alongside depolarizing and amplitude damping. A gap on the motivating
+workload, not an exotic case.

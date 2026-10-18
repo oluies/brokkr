@@ -622,14 +622,19 @@ the same storage is read with the imaginary part negated — and accumulates. Th
 <p>Checked against Scotty on a depolarizing channel acting on one qubit of a two-qubit state, four
 Kraus operators of four by four:</p>
 
+<p>Checked across <strong>three channels and three random states each</strong> — depolarizing,
+amplitude damping and dephasing, with Kraus counts of four, two and two, so the sequencing counter
+takes more than one path:</p>
+
 <div class="tablewrap">
 <table class="narrow">
+  <caption>Nine cases, worst value over all of them.</caption>
   <thead><tr><th>what</th><th>result</th></tr></thead>
   <tbody>
-    <tr><td>cycles for the whole channel</td><td>44</td></tr>
+    <tr><td>cycles for a four-operator channel</td><td>44</td></tr>
     <tr class="hi"><td>worst deviation from Scotty</td><td><strong>9.9 × 10<sup>-7</sup></strong></td></tr>
-    <tr class="hi"><td>trace of the result</td><td><strong>0.999997</strong></td></tr>
-    <tr><td>Hermitian symmetry</td><td>holds to 10<sup>-5</sup></td></tr>
+    <tr class="hi"><td>worst trace error</td><td><strong>2.9 × 10<sup>-6</sup></strong></td></tr>
+    <tr class="hi"><td>worst Hermitian asymmetry</td><td><strong>1.4 × 10<sup>-6</sup></strong></td></tr>
   </tbody>
 </table>
 </div>
@@ -639,6 +644,41 @@ states to Hermitian states, so those are properties of the <em>physics</em> rath
 reference — a transposed index or a conjugation dropped from the second product would break them
 even if the element-wise comparison were somehow satisfied. They are the closest thing available to
 a check that does not depend on the golden model being right.</p>
+
+<p>The datapath under it is checked at four depths, which pins the claim that makes the design
+scalable:</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>Deviation from Scotty against accumulation depth, same tile.</caption>
+  <thead><tr><th>depth</th><th>4</th><th>8</th><th>16</th><th>32</th></tr></thead>
+  <tbody>
+    <tr><td>worst deviation</td><td>2.1 × 10<sup>-7</sup></td><td>2.9 × 10<sup>-7</sup></td><td>2.4 × 10<sup>-7</sup></td><td>2.4 × 10<sup>-7</sup></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Eight times the depth costs nothing.</strong> The accumulator is widened and narrowed
+only on the way out, so a depth-32 product rounds once rather than thirty-two times — which is what
+licenses running the same design to the depth <span class="mono">2<sup>n</sup></span> a ten-qubit
+channel needs. Had the error climbed with depth, it could not be.</p>
+
+<div class="verdict">
+  <span class="label hot">What is verified, and at what size</span>
+  <p>All of this runs at <strong>dimension four</strong> — two qubits — because
+  <code>ChannelEngine</code> holds the dimension equal to the tile. The engine as built
+  <em>cannot</em> run at the ten or eleven qubits this assessment argues for: that would be a
+  1024-wide tile, some twenty million cells of multiplier. Reaching those sizes needs a loop over
+  output tiles with the intermediate in a memory rather than in registers, which is control work
+  this does not have.</p>
+  <p>So the honest statement is <strong>verified at dimension four, argued to 1024</strong>. The
+  arithmetic generalises — the depth sweep above is the evidence for that — but the engine does
+  not, yet.</p>
+  <p>One capability gap alongside it: Scotty's <strong>erasure</strong> channel maps dimension 2 to
+  dimension 3, and this engine assumes ρ, K and the result are all the same square size. That is a
+  channel <code>pctc</code> uses, so it is a gap on the motivating workload rather than on an exotic
+  case.</p>
+</div>
 
 <p>Forty-four cycles is eleven per Kraus operator: four for each matrix product, and three for
 capture, accumulate and sequencing. So 73% of cycles do arithmetic at this size, and the fixed three

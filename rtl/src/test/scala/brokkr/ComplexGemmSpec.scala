@@ -19,32 +19,43 @@ class ComplexGemmSpec extends AnyFlatSpec with ChiselSim {
 
   case class Step(aRe: Seq[Double], aIm: Seq[Double], bRe: Seq[Double], bIm: Seq[Double])
 
-  lazy val (tile, depth, steps, expected) = {
+  lazy val (tile, depths, steps, expected) = {
     val stream = getClass.getResourceAsStream("/gemm-vectors.txt")
     require(stream != null, "gemm-vectors.txt is missing; regenerate it with vectors.runMain")
 
-    val lines = Source.fromInputStream(stream).getLines().filterNot(_.startsWith("#")).toSeq
-    val fields = lines.map(_.trim.split("\\s+").toSeq)
+    val fields = Source.fromInputStream(stream).getLines()
+      .filterNot(_.startsWith("#"))
+      .map(_.trim.split("\\s+").toSeq)
+      .toSeq
+
     val t = fields.find(_.head == "tile").get(1).toInt
-    val d = fields.find(_.head == "depth").get(1).toInt
+    val ds = fields.find(_.head == "depths").get(1).split(",").map(_.toInt).toSeq
 
-    val parsed = fields.filter(_.head == "step").sortBy(_(1).toInt).map { f =>
-      val column = f(2).split(",").map(_.toDouble)
-      val row = f(3).split(",").map(_.toDouble)
+    val parsed = ds.map { depth =>
+      depth -> fields
+        .filter(f => f.head == "step" && f(1).toInt == depth)
+        .sortBy(_(2).toInt)
+        .map { f =>
+          val column = f(3).split(",").map(_.toDouble)
+          val row = f(4).split(",").map(_.toDouble)
 
-      Step(
-        aRe = (0 until t).map(i => column(2 * i)),
-        aIm = (0 until t).map(i => column(2 * i + 1)),
-        bRe = (0 until t).map(i => row(2 * i)),
-        bIm = (0 until t).map(i => row(2 * i + 1))
-      )
-    }
-
-    val results = fields.filter(_.head == "result").map { f =>
-      (f(1).toInt * t + f(2).toInt) -> (f(3).toDouble, f(4).toDouble)
+          Step(
+            aRe = (0 until t).map(i => column(2 * i)),
+            aIm = (0 until t).map(i => column(2 * i + 1)),
+            bRe = (0 until t).map(i => row(2 * i)),
+            bIm = (0 until t).map(i => row(2 * i + 1))
+          )
+        }
     }.toMap
 
-    (t, d, parsed, results)
+    val results = ds.map { depth =>
+      depth -> fields
+        .filter(f => f.head == "result" && f(1).toInt == depth)
+        .map(f => (f(2).toInt * t + f(3).toInt) -> (f(4).toDouble, f(5).toDouble))
+        .toMap
+    }.toMap
+
+    (t, ds, parsed, results)
   }
 
   def fixed(value: Double): BigInt =
@@ -53,10 +64,10 @@ class ComplexGemmSpec extends AnyFlatSpec with ChiselSim {
   def real(value: BigInt): Double = (BigDecimal(value) / Scale).toDouble
 
   /** The engine's arithmetic exactly: accumulate at full width, narrow once at the end. */
-  def model: Map[Int, (BigInt, BigInt)] = {
+  def model(depth: Int): Map[Int, (BigInt, BigInt)] = {
     val accumulated = Array.fill(tile * tile)((BigInt(0), BigInt(0)))
 
-    steps.foreach { step =>
+    steps(depth).foreach { step =>
       for (row <- 0 until tile; col <- 0 until tile) {
         val index = row * tile + col
         val (aRe, aIm) = (fixed(step.aRe(row)), fixed(step.aIm(row)))
@@ -72,13 +83,13 @@ class ComplexGemmSpec extends AnyFlatSpec with ChiselSim {
     }.toMap
   }
 
-  def run(dut: ComplexGemm): Unit = {
+  def run(dut: ComplexGemm, depth: Int): Unit = {
     dut.io.clear.poke(true.B)
     dut.io.inValid.poke(false.B)
     dut.clock.step()
     dut.io.clear.poke(false.B)
 
-    steps.foreach { step =>
+    steps(depth).foreach { step =>
       (0 until tile).foreach { i =>
         dut.io.aRe(i).poke(fixed(step.aRe(i)).S)
         dut.io.aIm(i).poke(fixed(step.aIm(i)).S)
@@ -94,52 +105,75 @@ class ComplexGemmSpec extends AnyFlatSpec with ChiselSim {
   }
 
   "ComplexGemm" should "load its golden vectors" in {
-    assert(tile == 4 && depth == 16)
-    assert(steps.length == depth)
-    assert(expected.size == tile * tile)
+    assert(tile == 4)
+    assert(depths == Seq(4, 8, 16, 32))
+    depths.foreach(d => assert(steps(d).length == d, s"depth $d should have $d steps"))
+    depths.foreach(d => assert(expected(d).size == tile * tile))
   }
 
-  it should "implement its fixed-point arithmetic exactly" in {
-    simulate(new ComplexGemm(4, DataWidth, maxDepth = 16)) { dut =>
-      run(dut)
+  it should "implement its fixed-point arithmetic exactly, at every depth" in {
+    depths.foreach { depth =>
+      simulate(new ComplexGemm(4, DataWidth, maxDepth = 32)) { dut =>
+        run(dut, depth)
 
-      val reference = model
+        val reference = model(depth)
 
-      (0 until tile * tile).foreach { index =>
-        withClue(s"cell ${index / tile},${index % tile} real: ") {
-          dut.io.outRe(index).expect(reference(index)._1.S)
-        }
-        withClue(s"cell ${index / tile},${index % tile} imaginary: ") {
-          dut.io.outIm(index).expect(reference(index)._2.S)
+        (0 until tile * tile).foreach { index =>
+          withClue(s"depth $depth, cell ${index / tile},${index % tile} real: ") {
+            dut.io.outRe(index).expect(reference(index)._1.S)
+          }
+          withClue(s"depth $depth, cell ${index / tile},${index % tile} imaginary: ") {
+            dut.io.outIm(index).expect(reference(index)._2.S)
+          }
         }
       }
     }
   }
 
-  it should "stay close to Scotty's complex matrix product" in {
-    var worst = 0.0
+  it should "not accumulate error as the depth grows" in {
+    // The claim this pins: the accumulator is widened and narrowed only on the way out, so a
+    // depth-32 product rounds once rather than thirty-two times. If that were wrong the deviation
+    // would climb with depth, and the design could not be run to the depth 2^n a ten-qubit channel
+    // needs.
+    val measured = depths.map { depth =>
+      var worst = 0.0
 
-    simulate(new ComplexGemm(4, DataWidth, maxDepth = 16)) { dut =>
-      run(dut)
+      simulate(new ComplexGemm(4, DataWidth, maxDepth = 32)) { dut =>
+        run(dut, depth)
 
-      (0 until tile * tile).foreach { index =>
-        val (wantRe, wantIm) = expected(index)
+        (0 until tile * tile).foreach { index =>
+          val (wantRe, wantIm) = expected(depth)(index)
 
-        worst = worst
-          .max(math.abs(real(dut.io.outRe(index).peek().litValue) - wantRe))
-          .max(math.abs(real(dut.io.outIm(index).peek().litValue) - wantIm))
+          worst = worst
+            .max(math.abs(real(dut.io.outRe(index).peek().litValue) - wantRe))
+            .max(math.abs(real(dut.io.outIm(index).peek().litValue) - wantIm))
+        }
       }
+
+      depth -> worst
     }
 
-    // Sixteen products accumulate before a single rounding, so this should be no worse than one
-    // multiply's error — which is the property that makes a deep GEMM safe in fixed point.
-    info(f"worst deviation from Scotty over ${tile * tile} cells, depth $depth: $worst%.3e")
-    assert(worst < 1e-6, f"Q2.$FractionBits drifted by $worst%.3e across a depth-$depth product")
+    measured.foreach { case (depth, worst) =>
+      info(f"depth $depth%3d: worst deviation $worst%.3e")
+    }
+
+    measured.foreach { case (depth, worst) =>
+      withClue(s"depth $depth: ")(assert(worst < 1e-6))
+    }
+
+    // Eight times the depth should not cost anything like eight times the error.
+    val shallow = measured.head._2
+    val deep = measured.last._2
+
+    assert(
+      deep < shallow * 4 + 1e-7,
+      f"error grew from $shallow%.3e at depth ${depths.head} to $deep%.3e at depth ${depths.last}"
+    )
   }
 
   it should "clear between tiles" in {
-    simulate(new ComplexGemm(4, DataWidth, maxDepth = 16)) { dut =>
-      run(dut)
+    simulate(new ComplexGemm(4, DataWidth, maxDepth = 32)) { dut =>
+      run(dut, depths.head)
 
       dut.io.clear.poke(true.B)
       dut.clock.step()
