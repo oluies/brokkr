@@ -17,15 +17,30 @@ object Generate {
     "DiagonalKernel" -> (() => new DiagonalKernel(qubitCount = 6, maxWidth = 3, dataWidth = 24))
   )
 
+  /** `Generate [module ...]`, or no arguments for all of them. Writes into `build/`. */
   def main(args: Array[String]): Unit = {
-    val name = args.headOption.getOrElse("AddressGen")
-    val build = modules.getOrElse(name, sys.error(s"no such module: $name, have ${modules.keys.mkString(", ")}"))
+    val wanted = if (args.isEmpty) modules.keys.toSeq.sorted else args.toSeq
 
-    println(
-      ChiselStage.emitSystemVerilog(
-        build(),
-        firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info")
+    wanted.foreach { name =>
+      val build = modules.getOrElse(
+        name,
+        sys.error(s"no such module: $name, have ${modules.keys.toSeq.sorted.mkString(", ")}")
       )
-    )
+
+      ChiselStage.emitSystemVerilogFile(
+        build(),
+        args = Array("--target-dir", "build"),
+        // disallowLocalVariables stops CIRCT emitting `automatic logic` inside always blocks,
+        // which Yosys rejects with "Invalid nesting of always blocks". Verilator accepts either,
+        // so the conservative form costs nothing and keeps one netlist good for both.
+        firtoolOpts = Array(
+          "-disable-all-randomization",
+          "-strip-debug-info",
+          "--lowering-options=disallowLocalVariables,disallowPackedArrays"
+        )
+      )
+
+      println(s"wrote build/$name.sv")
+    }
   }
 }

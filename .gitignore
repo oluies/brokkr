@@ -1,10 +1,10 @@
-out/
-target/
-.bsp/
 .bloop/
-.metals/
+.bsp/
 .idea/
-*.sv
+.metals/
 *.fir
 *.json.gz
+*.sv
 build/
+out/
+target/
