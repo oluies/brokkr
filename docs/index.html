@@ -181,7 +181,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: form-aware fusion measured; two RTL blocks verified ·
+  <p class="meta">17 October 2026 · status: three RTL blocks verified, two datapaths measured ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -407,6 +407,45 @@ they are <strong>three different datapaths</strong>:</p>
   </tbody>
 </table>
 </div>
+
+<p>Synthesised, the three cost what the lattice says they should. Both kernels below are the same
+width (<span class="mono">k = 3</span>) and the same format (Q1.23), so this compares datapaths
+rather than two differently sized designs:</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Yosys, mapped to a generic gate library — a proxy for area, not a standard-cell flow.
+  Reproduce with <code>scripts/area.sh</code>.</caption>
+  <thead><tr>
+    <th>module</th><th>cells</th><th>flops</th><th>vs diagonal</th><th class="note">what it is</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>AddressGen</td><td>79</td><td>0</td><td>—</td><td class="note">slice → base address, combinational</td></tr>
+    <tr class="hi"><td>DiagonalKernel</td><td>21 112</td><td>433</td><td>1.0×</td><td class="note">phase table + one complex multiplier</td></tr>
+    <tr class="hi"><td>DenseKernel</td><td>172 195</td><td>3 121</td><td><strong>8.2×</strong></td><td class="note">2^k complex multiply-accumulates</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>The measured 8.2× is the predicted one. The dense path needs
+<span class="mono">2<sup>k</sup></span> complex multipliers where the diagonal path needs one, and
+<span class="mono">4<sup>k</sup></span> operator entries where it needs
+<span class="mono">2<sup>k</sup></span> — both ratios are <span class="mono">2<sup>k</sup></span>,
+which is 8 at <span class="mono">k = 3</span>. The flop counts confirm the storage half exactly:
+433 against 3 121, and the diagonal kernel's 384 table flops are precisely 8 entries × 2 components
+× 24 bits.</p>
+
+<p><strong>The ratio is <span class="mono">2<sup>k</sup></span>, so it widens with exactly the
+parameter the roofline wants to increase.</strong> At the <span class="mono">k = 6</span> design
+point section 03 argues for, the dense path would cost around 64× the diagonal one. That is an
+extrapolation from one measured point rather than a second measurement — but the model predicted
+this point to within 2%, which is some reason to trust it.</p>
+
+<p>It does not mean a dense-only engine is 8× too big, because the paths run at different times and
+area is set by the peak. It means something more useful: <strong>diagonal blocks run on hardware
+eight times more expensive than they need</strong>, so the same silicon could run them eight lanes
+wide instead of one. With 18 of 65 blocks diagonal on the brickwork circuit, that is throughput
+being left on the floor rather than area.</p>
 
 <p>The form is decided by <em>reading the matrix</em> rather than from a table of gate names, so it
 cannot disagree with the semantics and classifies <code>Dagger</code> and user-defined gates for
@@ -725,14 +764,19 @@ would leave most of its area idle on real circuits.</figcaption>
 <div class="stage now">
   <p class="when">Stage 3 · begun · one block standing</p>
   <h3>RTL</h3>
-  <p><strong>Two blocks exist and are verified</strong>, both against Scotty, neither needing an
-  HDL toolchain installed — <code>chiseltest</code> interprets on the JVM and firtool arrives as an
-  ordinary dependency. The two Scala versions meet through a generated vector file, for the reason
-  given under verification below.</p>
+  <p><strong>Three blocks exist and are verified</strong> against Scotty. The two Scala versions
+  meet through a generated vector file, for the reason given under verification below.</p>
   <ul>
     <li><strong><code>AddressGen</code></strong> — the bit insertion that turns a slice number into a
     base amplitude address. Combinational, one stage per supported qubit, checked against all 592
     exhaustive vectors for six qubits and supports up to three wide.</li>
+    <li><strong><code>DenseKernel</code></strong> — the MAC array: a full
+    <span class="mono">2^k × 2^k</span> complex matrix-vector product, one output row per cycle.
+    Checked the same two ways, and additionally simulated under <strong>Verilator</strong> against
+    the same vectors, which is what says the <em>generated Verilog</em> agrees with the elaborated
+    design rather than merely that the design is right. Its deviation from Scotty is
+    1.06 × 10<sup>-7</sup>, <em>lower</em> than the diagonal kernel's despite accumulating eight
+    products, because the accumulator is widened and only the final shift rounds.</li>
     <li><strong><code>DiagonalKernel</code></strong> — the phase path: a <span class="mono">2^k</span>
     phase table, one complex multiplier, one amplitude per cycle. The first block that is not
     bit-exact, so it is checked twice: against an exact integer model of its own fixed-point
@@ -777,6 +821,14 @@ point rather than an incidental one.</p>
   tells you two implementations agree; these tell you the implementation is right. Both are asserted
   at every fusion width, so a pass that preserved norm and phase relationships but broke the
   algorithm would still be caught.</li>
+  <li><strong>Verilator needs driving directly.</strong> As of Chisel 6.7.0 neither
+  <code>chiseltest</code>'s Verilator backend nor ChiselSim's svsim works with Verilator 5.052: the
+  first fails to compile its generated C++ harness with <code>unknown type name 'WData'</code>, the
+  second desynchronises with <code>Unexpected message: Ready</code> on the first clock edge, on a
+  design as trivial as <code>AddressGen</code>. So the netlist is driven by a SystemVerilog
+  testbench reading the same golden vectors through <code>$readmemh</code>, which is closer to what
+  a real bring-up looks like anyway. Worth knowing before copying CUTE's build, which pins
+  chiseltest 6.0.0.</li>
   <li><strong>Scala 2.13 consuming Scala 3: tried, and it does not work.</strong> CUTE sets
   <code>-Ytasty-reader</code>, which in principle lets Chisel code call Scotty’s jar directly, so it
   was worth testing rather than assuming. 2.13.15 resolves the package and then fails on every type
@@ -825,7 +877,7 @@ point rather than an incidental one.</p>
   <a href="https://github.com/oluies/scotty">scotty</a> (the simulator and golden model) and
   <a href="https://github.com/oluies/pctc">pctc</a> (noisy post-selected closed timelike curves,
   the workload that started this). Apache-2.0.</p>
-  <p>Two blocks of RTL exist. The engine does not.</p>
+  <p>Three blocks of RTL exist. The engine does not.</p>
   <p class="colophon">&#169; 2026 &#214;rjan Lundberg &#183;
     <a href="https://github.com/oluies">GitHub</a> &#183;
     <a href="https://www.linkedin.com/in/orjanlundberg/">LinkedIn</a> &#183;

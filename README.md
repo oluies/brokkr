@@ -9,12 +9,12 @@ A design assessment, and eventually an implementation, of a
 
 ## Status
 
-Two blocks of RTL exist. The engine does not. What is here:
+Three blocks of RTL exist. The engine does not. What is here:
 
 - the design assessment in `docs/`, published to GitHub Pages;
 - the measurement record in `notes/`;
-- `rtl/` — Chisel: `AddressGen` (slice address generation) and `DiagonalKernel` (the phase
-  datapath), each verified against Scotty;
+- `rtl/` — Chisel: `AddressGen` (slice addressing), `DiagonalKernel` (the phase datapath) and
+  `DenseKernel` (the MAC array), each verified against Scotty;
 - `vectors/` — the Scala 3 generator that produces golden vectors from Scotty.
 
 The gate-fusion pass that motivated all of it lives in
@@ -25,13 +25,30 @@ because it is a simulator optimisation in its own right.
 
 ```bash
 ./mill rtl.test                                      # both blocks, against Scotty's vectors
-./mill rtl.runMain brokkr.Generate AddressGen        # emit SystemVerilog via CIRCT
-./mill rtl.runMain brokkr.Generate DiagonalKernel
+./mill rtl.runMain brokkr.Generate                   # emit SystemVerilog via CIRCT
+scripts/area.sh DenseKernel                          # synthesise with Yosys, report cells
+scripts/verilate.sh DenseKernel                      # simulate the netlist under Verilator
 ```
 
-No HDL toolchain is required to get this far: `chiseltest` interprets the design on the JVM, and
-firtool is fetched as an ordinary dependency. Verilator only becomes necessary when the design
-outgrows interpretation.
+The tests need no HDL toolchain: `chiseltest` interprets on the JVM and firtool is fetched as an
+ordinary dependency. `area.sh` needs Yosys and `verilate.sh` needs Verilator.
+
+Note that Verilator is driven by a SystemVerilog testbench rather than through Chisel. As of Chisel
+6.7.0 neither `chiseltest`'s Verilator backend nor ChiselSim's svsim works with Verilator 5.052 —
+the first fails to compile its harness with `unknown type name 'WData'`, the second desynchronises
+with `Unexpected message: Ready` on the first clock edge.
+
+### What it costs in silicon
+
+| module | cells | flops | vs diagonal |
+|---|---|---|---|
+| `AddressGen` | 79 | 0 | — |
+| `DiagonalKernel` | 21 112 | 433 | 1.0× |
+| `DenseKernel` | 172 195 | 3 121 | **8.2×** |
+
+Same width (k=3) and format (Q1.23), so this compares datapaths rather than differently sized
+designs. The ratio is `2^k` in both multipliers and storage, so it widens with the fusion width —
+at k=6 the dense path would cost around 64× the diagonal one.
 
 Regenerating the golden vectors needs Scotty published locally — **both** to Ivy and to M2, since
 Mill resolves a `SNAPSHOT` from `~/.ivy2/local` first and a stale copy there will silently shadow a
