@@ -133,19 +133,21 @@ unlimited queues. Adding finite per-bank queues, a finite issue width and in-ord
 
 | mapping | in order | look 8 | look 32 | look 256 | ceiling |
 |---|---|---|---|---|---|
-| low bits | **1.1** | 1.2 | 2.1 | 9.7 | 32 |
-| xor fold | 5.3 | 5.8 | 10.3 | 29.4 | 32 |
-| distinct | 9.6 | 9.6 | 11.3 | 16.0 | 32 |
-| ext. Hamming | **18.2** | 18.2 | 20.1 | 31.7 | 32 |
+| low bits | 1.0 | 1.2 | **2.1** | 9.4 | 32 |
+| xor fold | 1.0 | 5.3 | 9.5 | 28.8 | 32 |
+| distinct | 1.0 | 8.0 | 10.6 | 16.0 | 32 |
+| ext. Hamming | 1.0 | 8.0 | **19.1** | 31.7 | 32 |
 
 This takes back the previous section's conclusion. Low bits does *not* buy its way to full
-bandwidth: with depth-4 queues it reaches 9.7 of 32 even at a lookahead of 256. Each slice sends all
+bandwidth: with depth-4 queues it reaches 9.4 of 32 even at a lookahead of 256. Each slice sends all
 `2^k` accesses to one bank, so the issue window must reach past an entire slice — 64 requests —
-before it finds work for an idle bank. Queue depth barely helps (q=1→16 moves low bits 2.0→2.9,
-extended Hamming 17.4→31.4).
+before it finds work for an idle bank. Queue depth barely helps (q=1→16 moves low bits 1.9→2.8,
+extended Hamming 16.7→30.7).
 
-**In order, with modest queues, the bank mapping is worth 16× in bandwidth.** That is the number to
-design against.
+Note the first column: **strictly in-order issue caps every mapping at 1.0**, since a window holding
+one request can issue at most one per cycle whatever its bank. There the window is binding and the
+mapping is irrelevant. **At a lookahead of 32 the bank mapping is worth 9×** — 2.1 against 19.1.
+That is the number to design against.
 
 ### Integration
 
@@ -179,11 +181,12 @@ path.
 
 Lane `l` holds the amplitude at `base + offset(l)`, and `offset` is linear in `l`, so
 `bank(l) = L(base) ^ L(offset(l))` is **affine** in the lane index, with linear part equal to `L`'s
-columns at the support. Classifying every gather confirms it: a gather is affine, or it conflicts
-and is not a permutation of lanes at all. Nothing is ever arbitrary — against 58.8% for the operator
-permutations.
+columns at the support. Classifying every gather over every support and all 1024 slices confirms it: a gather is affine, or
+it conflicts and is not a permutation of lanes at all. Nothing is ever arbitrary — against 58.8% for
+the operator permutations. The classifier carries an `Arbitrary` case that stays empty, so the claim
+is one it could have refuted.
 
-But bit permutations are nearly absent (0–1.4%), so Omega is not enough here either. The address
+But bit permutations are nearly absent (0.00–0.90%), so Omega is not enough here either. The address
 stride *is* a bit permutation; the bank mapping XORs bits together on the way, and that is exactly
 what makes the gather conflict-free. The two are coupled: **what fixes bank conflicts is what stops
 the crossbar being a bit permutation.** Since a Benes network measured at 1.4% of a datapath, the

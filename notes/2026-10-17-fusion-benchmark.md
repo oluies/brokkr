@@ -507,3 +507,57 @@ the largest single lever left in the memory path.
 Refill from a level below when the state does not fit on chip, and the CPU-side cost of computing
 fusion, Benes routing and bank descriptors per block. Both are questions about a system rather than
 about this datapath.
+
+## Addendum 9: two model bugs, and the numbers they moved
+
+A review of addendum 7's commit found six issues, three of which changed published figures. Both of
+the substantive ones are recorded here because the corrected numbers supersede what addenda 7 and 8
+reported.
+
+### The lookahead parameter was not the lookahead
+
+`Arbiter.bandwidth` refilled its issue window *inside* the issue loop, so one cycle's scan could walk
+`lookahead + issueWidth - 1` requests past the blocked head rather than `lookahead`. Every
+intermediate column was optimistic by an amount depending on how many requests issued that cycle,
+and the "in order" column was not in order at all.
+
+Corrected:
+
+```
+mapping         in order   look 8  look 32  look 256   ceiling
+low bits             1.0      1.2      2.1       9.4        32
+xor fold             1.0      5.3      9.5      28.8        32
+distinct             1.0      8.0     10.6      16.0        32
+ext. Hamming         1.0      8.0     19.1      31.7        32
+```
+
+**The headline changes.** Addendum 7 said the bank mapping is worth 16x in bandwidth, 1.1 against
+18.2 in order. That was the bug. Strictly in-order issue caps *every* mapping at 1.0, because a
+window holding one request can issue at most one per cycle whatever its bank — the window is
+binding and the mapping is irrelevant. The mapping matters once there is somewhere to look: at a
+lookahead of 32 it is worth **9x**, 2.1 against 19.1.
+
+### The crossbar sampled 16 of 1024 slices
+
+`Crossbar.main` classified slices 0..15 while its own banner and all three documents claimed every
+slice. The affine/conflicting split is slice-independent so those figures stood, but the
+bit-permutation test turns on `L(base)`, which is not — so the "0 to 1.4%" figure was a 1.5% biased
+sample. Over all 1024 slices it is **0.00% to 0.90%**.
+
+This is precisely the trap documented in `Schedule.scala` after addendum 6 hit it: a prefix of
+slices leaves the high address bits always zero. Writing the warning did not prevent repeating the
+mistake two models later.
+
+### The classifier could not have failed
+
+`Crossbar.classify` folded "permutation but not affine" into the same bucket as "conflicts", so a
+non-affine permutation would have been counted as a conflict and the conclusion "nothing is ever
+arbitrary" printed regardless. It now has an `Arbitrary` case, the conclusion is printed only when
+that case is empty, and it is empty — but the claim is now one the model could have refuted.
+
+### Also fixed
+
+The address model was copied into four places and is now one helper in `BankConflicts`; the arbiter
+guards against degenerate arguments that previously hung it; and the "worst support" caption now
+says it is the worst per-slice conflict count rather than the worst bandwidth, which are different
+and were being conflated.

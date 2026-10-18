@@ -900,16 +900,17 @@ would leave most of its area idle on real circuits.</figcaption>
 <div class="tablewrap">
 <table>
   <caption>Bandwidth in accesses per cycle, 32 banks, per-bank queues 4 deep, issue width 32, each
-  mapping on the support it handles worst. “look N” is how far past a blocked request the issue
-  logic may scan. <code>model.runMain brokkr.model.Arbiter</code>.</caption>
+  mapping on the support with the worst per-slice conflict count. “look N” is how far past a blocked
+  request the issue logic may scan, within one cycle.
+  <code>model.runMain brokkr.model.Arbiter</code>.</caption>
   <thead><tr>
     <th>mapping</th><th>in order</th><th>look 8</th><th>look 32</th><th>look 256</th><th>ceiling</th>
   </tr></thead>
   <tbody>
-    <tr><td>low bits</td><td><strong>1.1</strong></td><td>1.2</td><td>2.1</td><td>9.7</td><td>32</td></tr>
-    <tr><td>xor fold</td><td>5.3</td><td>5.8</td><td>10.3</td><td>29.4</td><td>32</td></tr>
-    <tr><td>distinct</td><td>9.6</td><td>9.6</td><td>11.3</td><td>16.0</td><td>32</td></tr>
-    <tr class="hi"><td>ext. Hamming</td><td><strong>18.2</strong></td><td>18.2</td><td>20.1</td><td>31.7</td><td>32</td></tr>
+    <tr><td>low bits</td><td>1.0</td><td>1.2</td><td><strong>2.1</strong></td><td>9.4</td><td>32</td></tr>
+    <tr><td>xor fold</td><td>1.0</td><td>5.3</td><td>9.5</td><td>28.8</td><td>32</td></tr>
+    <tr><td>distinct</td><td>1.0</td><td>8.0</td><td>10.6</td><td>16.0</td><td>32</td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td>1.0</td><td>8.0</td><td><strong>19.1</strong></td><td>31.7</td><td>32</td></tr>
   </tbody>
 </table>
 </div>
@@ -918,17 +919,31 @@ would leave most of its area idle on real circuits.</figcaption>
     <span class="label hot">A correction to the correction</span>
     <p>The previous section said the naive mapping buys its way to full bandwidth with buffering.
     That was true of an arbiter with unbounded queues and free reordering, and it is <strong>false
-    under realistic issue</strong>: with depth-4 queues low bits reaches 9.7 of 32 even at a
-    lookahead of 256, and 1.1 in order.</p>
+    under realistic issue</strong>: with depth-4 queues low bits reaches 9.4 of 32 even at a
+    lookahead of 256.</p>
     <p>The reason is a burst-length effect the first model could not express. Each slice sends all
     <span class="mono">2<sup>k</sup></span> of its accesses to one bank, so the issue window has to
     reach <em>past an entire slice</em> — 64 requests — before it finds anything for an idle bank.
     Queue depth barely helps: from <span class="mono">q = 1</span> to
-    <span class="mono">q = 16</span> low bits moves 2.0 → 2.9, while extended Hamming moves
-    17.4 → 31.4.</p>
-    <p>In order, with modest queues, <strong>the bank mapping is worth 16× in bandwidth</strong> —
-    1.1 against 18.2. That is the number to design against, not the per-slice floor and not the
-    optimistic schedule.</p>
+    <span class="mono">q = 16</span> low bits moves 1.9 → 2.8, while extended Hamming moves
+    16.7 → 30.7.</p>
+    <p>Note the first column. <strong>Strictly in-order issue caps every mapping at 1.0</strong>,
+    because a window holding one request can issue at most one per cycle whatever its bank — there
+    the window is binding and the mapping is irrelevant. The mapping only starts to matter once
+    there is somewhere to look: at a lookahead of 32 it is worth <strong>9×</strong>, 2.1 against
+    19.1. That is the number to design against, not the per-slice floor and not the optimistic
+    schedule.</p>
+  </div>
+
+  <div class="verdict">
+    <span class="label">What this table said yesterday</span>
+    <p>An earlier version of this page reported 1.1 and 18.2 for the in-order column and called the
+    mapping worth 16×. Both were artifacts of a bug in the model: the issue window was refilled
+    <em>inside</em> the issue loop, so a cycle's scan could walk <span class="mono">lookahead +
+    issueWidth − 1</span> requests past the blocked head rather than <span class="mono">lookahead</span>.
+    Every intermediate column was optimistic by an amount that depended on how many requests
+    happened to issue that cycle, and the in-order column was not in-order at all. The numbers above
+    are from the corrected model.</p>
   </div>
 
   <h3>The crossbar is the easy half</h3>
@@ -942,12 +957,14 @@ would leave most of its area idle on real circuits.</figcaption>
 
   <p>is an <strong>affine</strong> function of the lane index whose linear part is just
   <span class="mono">L</span>'s columns at the support. Classifying every gather over every support
-  and slice confirms it: a gather is affine or it conflicts and is not a permutation of lanes at
-  all. <strong>Nothing is ever arbitrary</strong>, against 58.8% for the operator permutations the
-  permute path has to route.</p>
+  and slice — all 1 024 of them, not a prefix — confirms it: a gather is affine, or it conflicts and
+  is not a permutation of lanes at all. <strong>Nothing is ever arbitrary</strong>, against 58.8%
+  for the operator permutations the permute path has to route. The classifier carries an
+  <code>Arbitrary</code> case that stays empty and a conclusion that is printed only when it does,
+  so the claim is one the model could have refuted.</p>
 
   <p>One nuance worth keeping, because the earlier version of this page got it loose. Bit
-  permutations — what an Omega network routes natively — are almost absent here, at 0 to 1.4%
+  permutations — what an Omega network routes natively — are almost absent here, at 0.00% to 0.90%
   depending on the mapping. The address stride <em>is</em> a bit permutation of the index, but the
   bank mapping XORs bits together on the way, and that is exactly what makes the gather
   conflict-free. So the two are coupled: <strong>the thing that fixes bank conflicts is the thing
@@ -971,8 +988,8 @@ would leave most of its area idle on real circuits.</figcaption>
   <thead><tr><th>mapping</th><th>global port</th><th>no blocking</th><th>1 port/bank</th></tr></thead>
   <tbody>
     <tr><td>low bits</td><td>2.1</td><td>2.1</td><td>2.0</td></tr>
-    <tr><td>xor fold</td><td>10.3</td><td>9.9</td><td>7.4</td></tr>
-    <tr class="hi"><td>ext. Hamming</td><td>20.1</td><td>19.6</td><td>17.0</td></tr>
+    <tr><td>xor fold</td><td>9.5</td><td>9.9</td><td>7.4</td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td>19.1</td><td>19.6</td><td>17.0</td></tr>
   </tbody>
 </table>
 </div>
@@ -1109,8 +1126,8 @@ point rather than an incidental one.</p>
   <li><strong>Bank conflicts: answered, and the answer is a bank mapping rather than a fabric.</strong>
   Both shuffle problems that were hiding under one word now have measurements. The operator's
   permutation is usually arbitrary and needs a Benes network, which costs 1.4% of its datapath. The
-  memory-side question is settled by stage 2: with realistic in-order issue and modest queues the
-  bank mapping is worth 16× in bandwidth, 1.1 accesses per cycle against 18.2 of a possible 32, and
+  memory-side question is settled by stage 2: at a realistic issue window the bank mapping is worth
+  9× in bandwidth, 2.1 accesses per cycle against 19.1 of a possible 32, and
   the interconnect around it turns out not to matter much — the failure mode is starvation rather
   than blocking. What is not modelled is refill from a level below when the state does not fit on
   chip, and the CPU-side cost of preparing each block's descriptors.</li>

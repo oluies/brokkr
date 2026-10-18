@@ -23,21 +23,8 @@ object Schedule:
   /** Accesses for one slice, as a count per bank. */
   def demand(mapping: Mapping, support: Seq[Int], slice: Int): Array[Int] =
     val counts = Array.fill(mapping.banks)(0)
-    var base = slice
-    var j = 0
 
-    while j < support.length do
-      val mask = (1 << support(j)) - 1
-
-      base = (base & mask) | ((base & ~mask) << 1)
-      j += 1
-
-    (0 until (1 << support.length)).foreach: local =>
-      var offset = 0
-
-      support.indices.foreach(bit => if ((local >> bit) & 1) == 1 then offset |= 1 << support(bit))
-      counts(mapping.bank(base + offset)) += 1
-
+    addresses(support, slice).foreach(address => counts(mapping.bank(address)) += 1)
     counts
 
   /** Bandwidth in accesses per cycle, from running `slices` through a window `depth` slices deep. */

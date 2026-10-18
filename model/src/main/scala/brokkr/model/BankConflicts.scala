@@ -69,9 +69,8 @@ object BankConflicts:
   /** The floor: you cannot read `2^k` words from `banks` banks faster than this. */
   def floor(width: Int, bankBits: Int): Int = 1 << math.max(0, width - bankBits)
 
-  /** Counted directly, to check the algebra above rather than trust it. */
-  def cyclesByCounting(mapping: Mapping, support: Seq[Int], slice: Int, qubitCount: Int): Int =
-    val counts = Array.fill(mapping.banks)(0)
+  /** The base address of a slice: `slice` with a zero bit inserted at each supported position. */
+  def sliceBase(support: Seq[Int], slice: Int): Int =
     var base = slice
     var j = 0
 
@@ -81,12 +80,32 @@ object BankConflicts:
       base = (base & mask) | ((base & ~mask) << 1)
       j += 1
 
-    (0 until (1 << support.length)).foreach: local =>
-      var offset = 0
+    base
 
-      support.indices.foreach(bit => if ((local >> bit) & 1) == 1 then offset |= 1 << support(bit))
-      counts(mapping.bank(base + offset)) += 1
+  /** Where local index `local` sits relative to a slice's base. */
+  def offsetOf(support: Seq[Int], local: Int): Int =
+    var offset = 0
+    var bit = 0
 
+    while bit < support.length do
+      if ((local >> bit) & 1) == 1 then offset |= 1 << support(bit)
+      bit += 1
+
+    offset
+
+  /** Every address a slice touches, in lane order. One definition, because four copies of it is
+    * four places to correct when the address model changes.
+    */
+  def addresses(support: Seq[Int], slice: Int): Array[Int] =
+    val base = sliceBase(support, slice)
+
+    Array.tabulate(1 << support.length)(local => base + offsetOf(support, local))
+
+  /** Counted directly, to check the algebra above rather than trust it. */
+  def cyclesByCounting(mapping: Mapping, support: Seq[Int], slice: Int, qubitCount: Int): Int =
+    val counts = Array.fill(mapping.banks)(0)
+
+    addresses(support, slice).foreach(address => counts(mapping.bank(address)) += 1)
     counts.max
 
   // ---- the mappings worth comparing -------------------------------------------------------

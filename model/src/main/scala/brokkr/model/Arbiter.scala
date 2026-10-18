@@ -25,20 +25,9 @@ object Arbiter:
     val out = new Array[Int](slices * width)
 
     (0 until slices).foreach: slice =>
-      var base = slice
-      var j = 0
+      val addresses = BankConflicts.addresses(support, slice)
 
-      while j < support.length do
-        val mask = (1 << support(j)) - 1
-
-        base = (base & mask) | ((base & ~mask) << 1)
-        j += 1
-
-      (0 until width).foreach: local =>
-        var offset = 0
-
-        support.indices.foreach(bit => if ((local >> bit) & 1) == 1 then offset |= 1 << support(bit))
-        out(slice * width + local) = mapping.bank(base + offset)
+      (0 until width).foreach(local => out(slice * width + local) = mapping.bank(addresses(local)))
 
     out
 
@@ -55,6 +44,10 @@ object Arbiter:
       issueWidth: Int,
       lookahead: Int
   ): Double =
+    require(lookahead >= 1, s"a lookahead of $lookahead would never fill the window")
+    require(queueDepth >= 1, s"a queue depth of $queueDepth would never accept a request")
+    require(issueWidth >= 1, s"an issue width of $issueWidth would never issue one")
+
     val requests = stream(mapping, support, slices)
     val occupancy = new Array[Int](mapping.banks)
     val window = mutable.ArrayBuffer.empty[Int]
@@ -73,6 +66,9 @@ object Arbiter:
         window += requests(next)
         next += 1
 
+      // The window is refilled at the cycle boundary only. Refilling inside this loop would let
+      // the scan walk up to `lookahead + issueWidth - 1` requests past the blocked head, which is
+      // not what the parameter means.
       var issued = 0
       var scanned = 0
 
@@ -81,10 +77,6 @@ object Arbiter:
           occupancy(window(scanned)) += 1
           window.remove(scanned)
           issued += 1
-
-          while window.length < lookahead && next < requests.length do
-            window += requests(next)
-            next += 1
         else scanned += 1
 
       cycles += 1
@@ -106,7 +98,9 @@ object Arbiter:
 
     println(s"$qubitCount qubits, $banks banks, width-$width blocks, all $slices slices.")
     println(s"Issue width $banks, per-bank queue depth 4. Bandwidth in accesses per cycle.")
-    println("Each mapping on the support it handles worst.")
+    println("Each mapping on the support with the worst per-slice conflict count — which is not")
+    println("quite the support with the worst bandwidth, since among supports tied on conflicts the")
+    println("achieved rate still varies with bank coverage. These are bad supports, not the worst.")
     println()
     println(f"${"mapping"}%-14s${"in order"}%10s${"look 8"}%9s${"look 32"}%9s${"look 256"}%10s${"ceiling"}%9s")
 
