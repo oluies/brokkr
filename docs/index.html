@@ -181,7 +181,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: datapaths measured; memory path modelled end to end ·
+  <p class="meta">17 October 2026 · status: four datapaths built and measured; the density one is the answer ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -579,6 +579,49 @@ for operand staging, and most of the design carries over unchanged.</p>
 not for scale. And if the kernel is complex GEMM, then the quantum-specific contribution is thin:
 much of the value would be in the surrounding compiler and verification work rather than in the
 datapath. That is a less exciting claim than a novel architecture, and a much more defensible one.</p>
+
+<h3>And it is built</h3>
+
+<p><code>ComplexGemm</code> is the datapath: a <span class="mono">tile × tile</span> array of complex
+accumulators fed one column of <span class="mono">A</span> and one row of <span class="mono">B</span>
+per cycle, accumulating their outer product. After <span class="mono">depth</span> cycles it holds a
+tile of <span class="mono">C = A · B</span>. Verified against Scotty's own complex matrix product the
+same two ways as everything else — exactly against an integer model of its arithmetic, and for drift
+against the doubles.</p>
+
+<p>Its deviation is <strong>2.8 × 10<sup>-7</sup> over a depth-16 product</strong>, which is no
+worse than the single-multiply kernels at 1.2 to 3.4. Sixteen products accumulate before one
+rounding, because the accumulator is widened and narrowed only on the way out. That is the property
+that makes a deep GEMM safe in fixed point, and it is what lets the same design run to the depth
+<span class="mono">2<sup>n</sup></span> a ten-qubit channel needs.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>All four datapaths synthesised the same way, normalised by the throughput each buys.
+  <code>scripts/area.sh</code>.</caption>
+  <thead><tr>
+    <th>module</th><th>cells</th><th>complex MAC/cycle</th><th>cells per MAC</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>DiagonalKernel</td><td>20 775</td><td>1</td><td>20 775</td></tr>
+    <tr><td>MonomialKernel</td><td>159 287</td><td>8</td><td>19 910</td></tr>
+    <tr><td>DenseKernel</td><td>169 577</td><td>8</td><td>21 197</td></tr>
+    <tr class="hi"><td>ComplexGemm</td><td>322 347</td><td>16</td><td><strong>20 146</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="verdict">
+  <span class="label cool">The cleanest number in this assessment</span>
+  <p>All four land within 6% of each other at about <strong>20 000 cells per complex
+  multiply-accumulate</strong>. Phase tables, Benes networks, wide accumulators — every
+  architectural difference this page has argued over is noise against the multipliers.</p>
+  <p>Which settles the comparison. <strong>Silicon per MAC is the same whichever engine you
+  build.</strong> What differs is how much useful work a MAC does, and that is arithmetic intensity:
+  0.44 flop/byte for an unfused state vector, 15.9 for the best fused block, <strong>683 for a
+  ten-qubit density matrix</strong>. Same cost, forty-three times the work. The density-matrix
+  engine does not win because it is cheaper; it wins because its multipliers are busy.</p>
+</div>
 
 <h2><span class="num">05</span>The capacity ceiling</h2>
 
@@ -1471,7 +1514,7 @@ point rather than an incidental one.</p>
   <a href="https://github.com/oluies/scotty">scotty</a> (the simulator and golden model) and
   <a href="https://github.com/oluies/pctc">pctc</a> (noisy post-selected closed timelike curves,
   the workload that started this). Apache-2.0.</p>
-  <p>All three datapaths exist. The engine does not.</p>
+  <p>Four datapaths exist, including the one the measurements point at. The engine does not.</p>
   <p class="colophon">&#169; 2026 &#214;rjan Lundberg &#183;
     <a href="https://github.com/oluies">GitHub</a> &#183;
     <a href="https://www.linkedin.com/in/orjanlundberg/">LinkedIn</a> &#183;

@@ -14,9 +14,9 @@ All three datapaths exist as RTL. The engine does not. What is here:
 - the design assessment in `docs/`, published to GitHub Pages;
 - the measurement record in `notes/`;
 - `model/` — the cycle-approximate model: bank conflicts, in Scala;
-- `rtl/` — Chisel: `AddressGen` (slice addressing), `DiagonalKernel` (phase path),
-  `MonomialKernel` (permute path, with a Benes network) and `DenseKernel` (MAC array), each
-  verified against Scotty under Verilator;
+- `rtl/` — Chisel: `ComplexGemm` (the density-matrix datapath, which the measurements point at),
+  plus the state-vector path — `AddressGen`, `DiagonalKernel`, `MonomialKernel` (with a Benes
+  network) and `DenseKernel` — each verified against Scotty under Verilator;
 - `vectors/` — the Scala 3 generator that produces golden vectors from Scotty.
 
 The gate-fusion pass that motivated all of it lives in
@@ -391,6 +391,22 @@ The capacity ceiling is hard and low — eleven qubits, since `4^n` grows fast �
 for small noisy systems rather than for scale. And if the kernel is complex GEMM, the
 quantum-specific contribution is thin: the value would be in the compiler and verification work
 rather than the datapath. Less exciting than a novel architecture, and much more defensible.
+
+`ComplexGemm` is built: a tile×tile array of complex accumulators fed one column of A and one row
+of B per cycle. Its deviation from Scotty is 2.8e-07 over a depth-16 product, no worse than the
+single-multiply kernels, because the accumulator is widened and narrowed only on the way out.
+
+| module | cells | complex MAC/cycle | cells per MAC |
+|---|---|---|---|
+| `DiagonalKernel` | 20 775 | 1 | 20 775 |
+| `MonomialKernel` | 159 287 | 8 | 19 910 |
+| `DenseKernel` | 169 577 | 8 | 21 197 |
+| `ComplexGemm` | 322 347 | 16 | **20 146** |
+
+**All four land within 6% of each other at about 20 000 cells per complex MAC.** Every
+architectural difference — phase tables, Benes networks, wide accumulators — is noise against the
+multipliers. So silicon per MAC is the same whichever engine you build; what differs is how much
+useful work a MAC does. Same cost, 43× the work.
 
 ## The finding so far
 

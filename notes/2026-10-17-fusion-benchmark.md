@@ -979,3 +979,41 @@ for small noisy systems, not for scale.
 And if the kernel is complex GEMM then the quantum-specific contribution is thin: much of the value
 would sit in the compiler and verification work rather than in the datapath. That is less exciting
 than a novel architecture and considerably more defensible.
+
+
+## Addendum 18: the density-matrix datapath, built
+
+`ComplexGemm`: a `tile x tile` array of complex accumulators fed one column of `A` and one row of
+`B` per cycle, accumulating their outer product. After `depth` cycles it holds a tile of
+`C = A · B`. That is the same structure as CUTE's MatrixTE, which is the point.
+
+Verified against Scotty's `ComplexMatrix.multiply` the same two ways as everything else: exactly
+against an integer model of its own arithmetic, and for drift against the doubles.
+
+**Deviation is 2.8e-07 over a depth-16 product** — no worse than the single-multiply kernels at
+1.2e-07 to 3.4e-07. Sixteen products accumulate before one rounding, because the accumulator is
+widened and narrowed only on the way out. That is what makes a deep GEMM safe in fixed point, and
+what lets the same design run to the depth `2^n` a ten-qubit channel needs. (Validated at depth 16;
+the design extends by construction, since accumulator width scales with `log2(maxDepth)`.)
+
+### The cleanest number in the project
+
+```
+module              cells   complex MAC/cyc   cells per MAC
+DiagonalKernel      20775                 1           20775
+MonomialKernel     159287                 8           19910
+DenseKernel        169577                 8           21197
+ComplexGemm        322347                16           20146
+```
+
+**All four within 6% of each other at about 20 000 cells per complex multiply-accumulate.** Phase
+tables, Benes networks, wide accumulators — every architectural difference argued over in these
+notes is noise against the multipliers.
+
+Which settles the comparison the whole project has been circling. **Silicon per MAC is the same
+whichever engine you build.** What differs is how much useful work a MAC does, and that is
+arithmetic intensity: 0.44 flop/byte unfused, 15.9 for the best fused block, 683 for a ten-qubit
+density matrix.
+
+The density-matrix engine does not win because it is cheaper. It wins because its multipliers are
+busy.

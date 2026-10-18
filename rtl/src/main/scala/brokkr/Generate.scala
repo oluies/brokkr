@@ -19,7 +19,10 @@ object Generate {
     // rather than two differently sized designs.
     "DenseKernel" -> (() => new DenseKernel(maxWidth = 3, dataWidth = 24)),
     "MonomialKernel" -> (() => new MonomialKernel(maxWidth = 3, dataWidth = 24)),
-    "BenesOnly" -> (() => new BenesOnly(maxWidth = 3, dataWidth = 24))
+    "BenesOnly" -> (() => new BenesOnly(maxWidth = 3, dataWidth = 24)),
+    // The density-matrix engine's datapath. Tile 4 is 16 complex multiply-accumulates per cycle,
+    // against the dense state-vector kernel's 8, so the comparison is per complex MAC.
+    "ComplexGemm" -> (() => new ComplexGemm(tile = 4, dataWidth = 24, maxDepth = 1024))
   )
 
   /** `Generate [module ...]`, or no arguments for all of them. Writes into `build/`. */
