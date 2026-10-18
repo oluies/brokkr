@@ -22,7 +22,9 @@ object Generate {
     "BenesOnly" -> (() => new BenesOnly(maxWidth = 3, dataWidth = 24)),
     // The density-matrix engine's datapath. Tile 4 is 16 complex multiply-accumulates per cycle,
     // against the dense state-vector kernel's 8, so the comparison is per complex MAC.
-    "ComplexGemm" -> (() => new ComplexGemm(tile = 4, dataWidth = 24, maxDepth = 1024))
+    "ComplexGemm" -> (() => new ComplexGemm(tile = 4, dataWidth = 24, maxDepth = 1024)),
+    // The whole engine: a Kraus channel on a two-qubit state, four operators.
+    "ChannelEngine" -> (() => new ChannelEngine(dimension = 4, krausCount = 4, dataWidth = 24))
   )
 
   /** `Generate [module ...]`, or no arguments for all of them. Writes into `build/`. */

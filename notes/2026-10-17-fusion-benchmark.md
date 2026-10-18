@@ -1017,3 +1017,54 @@ density matrix.
 
 The density-matrix engine does not win because it is cheaper. It wins because its multipliers are
 busy.
+
+
+## Addendum 19: the engine, running a full Kraus channel
+
+`ChannelEngine` sequences `ComplexGemm` into something that applies a channel. For each Kraus
+operator: `T = K · rho`, keep the intermediate, `R = T · K†` — whose right operand is the conjugate
+of the same column, so the same storage is read with the imaginary part negated — and accumulate.
+That is `Channel.apply`, in gates.
+
+Checked against Scotty on a depolarizing channel acting on one qubit of a two-qubit state, four
+Kraus operators of 4x4:
+
+```
+cycles for the whole channel      44
+worst deviation from Scotty       9.9e-07
+trace of the result               0.999997
+Hermitian symmetry                holds to 1e-05
+```
+
+### The physical checks are worth more than the numerical one
+
+A channel is trace preserving and maps Hermitian states to Hermitian states. Those are properties of
+the *physics*, not of the reference: a transposed index or a conjugation dropped from the second
+product would break them even if the element-wise comparison somehow passed. They are the closest
+thing available to a check that does not depend on the golden model being right.
+
+### Cycles and area
+
+Forty-four cycles is eleven per Kraus operator — four per matrix product, three for capture,
+accumulate and sequencing. So 73% of cycles do arithmetic at this size, and the fixed three amortise
+as the dimension grows: 91% at sixteen.
+
+```
+ComplexGemm     322347 cells    the multiplier array
+ChannelEngine   342351 cells    +6% for storage, sequencing, accumulation
+```
+
+**Control and storage cost six percent.** The same lesson as the per-MAC table in addendum 18,
+arriving from a different direction: in a design like this the multipliers *are* the design.
+
+### A measurement error caught before publication
+
+The first area figure for `ChannelEngine` read 20646 cells — less than the datapath it contains.
+firtool emits submodules to their own files, and `scripts/area.sh` was reading only the named one,
+leaving `ComplexGemm` as a blackbox. The script now reads every generated file and flattens the
+hierarchy before counting. Leaf modules are unaffected, since none of them has a submodule, and
+their published figures stand.
+
+That is the third time in these notes a number has looked wrong and been wrong. The pattern worth
+keeping is the one that caught it: a result that contradicts something already known — here, a
+container smaller than its contents — is worth more suspicion than a result that merely surprises.

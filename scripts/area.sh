@@ -20,9 +20,16 @@ if [[ ! -f "$source_file" ]]; then
   exit 1
 fi
 
+# Every generated module, not just the named one: firtool emits submodules to their own files, and
+# reading the top alone leaves them as blackboxes — which silently reports a design as far smaller
+# than it is. `hierarchy -top` then prunes whatever the named module does not reach.
+sources=$(ls build/*.sv | tr '\n' ' ')
+
 yosys -p "
-  read_verilog -sv ${source_file}
+  read_verilog -sv ${sources}
   hierarchy -top ${module}
+  # Inline submodules, so the reported count is the whole design rather than the top's own cells.
+  flatten
   proc; opt; fsm; opt; memory; opt
   techmap; opt
   abc -g AND,NAND,OR,NOR,XOR,XNOR,ANDNOT,ORNOT,MUX,NMUX

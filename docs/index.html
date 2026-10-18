@@ -181,7 +181,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: four datapaths built and measured; the density one is the answer ·
+  <p class="meta">17 October 2026 · status: the density-matrix engine runs a full Kraus channel against Scotty ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -610,6 +610,54 @@ that makes a deep GEMM safe in fixed point, and it is what lets the same design 
   </tbody>
 </table>
 </div>
+
+<h3>The engine</h3>
+
+<p><code>ChannelEngine</code> sequences the datapath into something that applies a channel. For each
+Kraus operator it runs <span class="mono">T = K · ρ</span>, keeps the intermediate, runs
+<span class="mono">R = T · K†</span> — whose right operand is the conjugate of the same column, so
+the same storage is read with the imaginary part negated — and accumulates. That is
+<code>Channel.apply</code>, in gates.</p>
+
+<p>Checked against Scotty on a depolarizing channel acting on one qubit of a two-qubit state, four
+Kraus operators of four by four:</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <thead><tr><th>what</th><th>result</th></tr></thead>
+  <tbody>
+    <tr><td>cycles for the whole channel</td><td>44</td></tr>
+    <tr class="hi"><td>worst deviation from Scotty</td><td><strong>9.9 × 10<sup>-7</sup></strong></td></tr>
+    <tr class="hi"><td>trace of the result</td><td><strong>0.999997</strong></td></tr>
+    <tr><td>Hermitian symmetry</td><td>holds to 10<sup>-5</sup></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>The last two are worth more than the first. A channel is trace preserving and takes Hermitian
+states to Hermitian states, so those are properties of the <em>physics</em> rather than of the
+reference — a transposed index or a conjugation dropped from the second product would break them
+even if the element-wise comparison were somehow satisfied. They are the closest thing available to
+a check that does not depend on the golden model being right.</p>
+
+<p>Forty-four cycles is eleven per Kraus operator: four for each matrix product, and three for
+capture, accumulate and sequencing. So 73% of cycles do arithmetic at this size, and the fixed three
+amortise as the dimension grows — 91% at sixteen.</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>The engine against its own datapath.</caption>
+  <thead><tr><th>module</th><th>cells</th><th class="note">what it adds</th></tr></thead>
+  <tbody>
+    <tr><td>ComplexGemm</td><td>322 347</td><td class="note">the multiplier array</td></tr>
+    <tr class="hi"><td>ChannelEngine</td><td><strong>342 351</strong></td><td class="note">+6% for storage, sequencing and accumulation</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Control and storage cost six percent.</strong> Which is the same lesson as the per-MAC
+table below, arriving from a different direction: in a design like this the multipliers are the
+design, and everything around them is rounding error.</p>
 
 <div class="verdict">
   <span class="label cool">The cleanest number in this assessment</span>
@@ -1514,7 +1562,7 @@ point rather than an incidental one.</p>
   <a href="https://github.com/oluies/scotty">scotty</a> (the simulator and golden model) and
   <a href="https://github.com/oluies/pctc">pctc</a> (noisy post-selected closed timelike curves,
   the workload that started this). Apache-2.0.</p>
-  <p>Four datapaths exist, including the one the measurements point at. The engine does not.</p>
+  <p>An engine exists that applies a Kraus channel. A system around it does not.</p>
   <p class="colophon">&#169; 2026 &#214;rjan Lundberg &#183;
     <a href="https://github.com/oluies">GitHub</a> &#183;
     <a href="https://www.linkedin.com/in/orjanlundberg/">LinkedIn</a> &#183;

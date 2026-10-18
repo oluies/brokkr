@@ -14,7 +14,8 @@ All three datapaths exist as RTL. The engine does not. What is here:
 - the design assessment in `docs/`, published to GitHub Pages;
 - the measurement record in `notes/`;
 - `model/` — the cycle-approximate model: bank conflicts, in Scala;
-- `rtl/` — Chisel: `ComplexGemm` (the density-matrix datapath, which the measurements point at),
+- `rtl/` — Chisel: `ChannelEngine` and `ComplexGemm` (the density-matrix engine, which the
+  measurements point at),
   plus the state-vector path — `AddressGen`, `DiagonalKernel`, `MonomialKernel` (with a Benes
   network) and `DenseKernel` — each verified against Scotty under Verilator;
 - `vectors/` — the Scala 3 generator that produces golden vectors from Scotty.
@@ -392,8 +393,17 @@ for small noisy systems rather than for scale. And if the kernel is complex GEMM
 quantum-specific contribution is thin: the value would be in the compiler and verification work
 rather than the datapath. Less exciting than a novel architecture, and much more defensible.
 
-`ComplexGemm` is built: a tile×tile array of complex accumulators fed one column of A and one row
-of B per cycle. Its deviation from Scotty is 2.8e-07 over a depth-16 product, no worse than the
+**`ChannelEngine` applies a full Kraus channel**, checked against Scotty on a depolarizing channel
+over a two-qubit state: 44 cycles, worst deviation **9.9e-07**, **trace preserved at 0.999997**, and
+Hermitian symmetry holding to 1e-05. The last two are properties of the physics rather than of the
+reference — a transposed index or a dropped conjugation would break them even if an element-wise
+comparison somehow passed.
+
+It costs 342 351 cells against `ComplexGemm`'s 322 347, so **storage, sequencing and accumulation
+are 6%** on top of the multiplier array.
+
+`ComplexGemm` is the datapath under it: a tile×tile array of complex accumulators fed one column of
+A and one row of B per cycle. Its deviation from Scotty is 2.8e-07 over a depth-16 product, no worse than the
 single-multiply kernels, because the accumulator is widened and narrowed only on the way out.
 
 | module | cells | complex MAC/cycle | cells per MAC |
@@ -402,6 +412,7 @@ single-multiply kernels, because the accumulator is widened and narrowed only on
 | `MonomialKernel` | 159 287 | 8 | 19 910 |
 | `DenseKernel` | 169 577 | 8 | 21 197 |
 | `ComplexGemm` | 322 347 | 16 | **20 146** |
+| `ChannelEngine` | 342 351 | 16 | — (+6% control) |
 
 **All four land within 6% of each other at about 20 000 cells per complex MAC.** Every
 architectural difference — phase tables, Benes networks, wide accumulators — is noise against the
