@@ -455,6 +455,10 @@ The three gaps left by addendum 7. Two needed arithmetic rather than simulation.
 
 ### The request network buys almost nothing
 
+**Superseded by addendum 10.** The comparison below is not an experiment — both configurations
+shared one bounded window — and the conclusion drawn from it is wrong. The table is kept so the
+correction in addendum 10 has something to point at.
+
 ```
 mapping         global port   no blocking   1 port/bank   ceiling
 low bits                2.1           2.1           2.0        32
@@ -602,3 +606,45 @@ different claim from the one addendum 8 made.
 
 Extended Hamming goes 31.4 read-only to 15.7 with writeback, and back to 31.4 with a
 read-modify-write memory.
+
+
+## Addendum 11: the arbiter table went round a loop
+
+Addendum 9 reported corrected arbiter figures and a headline of 9x. **Those were the artifact, and
+the original numbers were right.** The sequence is worth recording because the intermediate state
+was published.
+
+1. The first model refilled its issue window inside the issue loop. A review found that
+   `lookahead` therefore did not bound what it claimed to bound.
+2. The correction moved the refill to the cycle boundary. That fixed the scan distance and
+   simultaneously made `lookahead` the window *capacity*, which caps throughput at `lookahead`
+   accesses per cycle. The resulting table read 1.0 everywhere in order and exactly 8.0 at look 8 —
+   the cap, not a property of any bank mapping. A second review caught it.
+3. The model now sizes its window to reach the issue width and bounds only the scan distance, which
+   is what the parameter always claimed. That reproduces the original numbers.
+
+```
+mapping         in order   look 8  look 32  look 256   ceiling
+low bits             1.1      1.2      2.1       9.7        32
+xor fold             5.3      5.8     10.3      29.4        32
+distinct             9.6      9.6     11.3      16.0        32
+ext. Hamming        18.2     18.2     20.1      31.7        32
+```
+
+So **the bank mapping is worth 16x in order**, 1.1 against 18.2, as first reported. The first
+version's figures were right and its code was unclear; the correction was wrong; this version is
+both right and clear.
+
+The lesson is narrower than "review catches bugs". The first review's finding was about the code
+saying something it did not do — a real defect, correctly identified. The mistake was mine in
+treating a clarity finding as a numerical one and changing behaviour to fix it. A fix that moves
+published numbers deserves the same scrutiny as the original measurement, and this one did not get
+it until a second review.
+
+### Also fixed from the same review
+
+The notes' addendum 8 table is now marked superseded rather than left to contradict addendum 10. And
+three places still said the memory-side shuffle *is* a bit permutation that an Omega network suits,
+which the 0.00-0.90% measurement contradicts: the address stride is a bit permutation, but composed
+with the bank mapping that makes gathers conflict-free it is affine. Both shuffles need more than
+Omega, for different reasons.

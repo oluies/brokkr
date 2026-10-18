@@ -133,20 +133,18 @@ unlimited queues. Adding finite per-bank queues, a finite issue width and in-ord
 
 | mapping | in order | look 8 | look 32 | look 256 | ceiling |
 |---|---|---|---|---|---|
-| low bits | 1.0 | 1.2 | **2.1** | 9.4 | 32 |
-| xor fold | 1.0 | 5.3 | 9.5 | 28.8 | 32 |
-| distinct | 1.0 | 8.0 | 10.6 | 16.0 | 32 |
-| ext. Hamming | 1.0 | 8.0 | **19.1** | 31.7 | 32 |
+| low bits | **1.1** | 1.2 | 2.1 | 9.7 | 32 |
+| xor fold | 5.3 | 5.8 | 10.3 | 29.4 | 32 |
+| distinct | 9.6 | 9.6 | 11.3 | 16.0 | 32 |
+| ext. Hamming | **18.2** | 18.2 | 20.1 | 31.7 | 32 |
 
 This takes back the previous section's conclusion. Low bits does *not* buy its way to full
-bandwidth: with depth-4 queues it reaches 9.4 of 32 even at a lookahead of 256. Each slice sends all
+bandwidth: with depth-4 queues it reaches 9.7 of 32 even at a lookahead of 256. Each slice sends all
 `2^k` accesses to one bank, so the issue window must reach past an entire slice — 64 requests —
-before it finds work for an idle bank. Queue depth barely helps (q=1→16 moves low bits 1.9→2.8,
-extended Hamming 16.7→30.7).
+before it finds work for an idle bank. Queue depth barely helps (q=1→16 moves low bits 2.0→2.9,
+extended Hamming 17.4→31.4).
 
-Note the first column: **strictly in-order issue caps every mapping at 1.0**, since a window holding
-one request can issue at most one per cycle whatever its bank. There the window is binding and the
-mapping is irrelevant. **At a lookahead of 32 the bank mapping is worth 9×** — 2.1 against 19.1.
+**In order, with modest queues, the bank mapping is worth 16× in bandwidth** — 1.1 against 18.2.
 That is the number to design against.
 
 ### Integration
@@ -220,9 +218,10 @@ Toffoli and Fredkin generate permutations that are not affine. An Omega network 
 routes bit permutations natively, so it could not serve most blocks. A Benes network routes every
 permutation in `(2k-1) * 2^(k-1)` switches, with settings computed by the host once per block.
 
-Note this is a different shuffle from the memory-side one. Moving amplitudes between lanes and banks
-*is* a bit permutation, set by the qubit support, and an Omega network suits it. Routing the
-operator's own permutation is not.
+Note this is a different shuffle from the memory-side one — but both need more than an Omega
+network, for different reasons. The address *stride* is a bit permutation of the index, yet composed
+with the bank mapping that makes gathers conflict-free it becomes affine, not a bit permutation.
+Routing the operator's own permutation is harder still: usually arbitrary.
 
 Regenerating the golden vectors needs Scotty published locally — **both** to Ivy and to M2, since
 Mill resolves a `SNAPSHOT` from `~/.ivy2/local` first and a stale copy there will silently shadow a

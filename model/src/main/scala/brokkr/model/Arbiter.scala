@@ -33,8 +33,14 @@ object Arbiter:
 
   /** Bandwidth in accesses per cycle.
     *
-    * @param lookahead how far past a blocked request the issue logic may look. 1 is strictly
-    *                  in-order; large values approach the optimistic model.
+    * `lookahead` is how far past a blocked request the issue logic may scan, and nothing else. It
+    * is deliberately not the window capacity: tying the two together caps throughput at `lookahead`
+    * accesses per cycle, which produces a table that looks like a statement about bank mappings and
+    * is really a statement about the cap. The window here is sized to exercise the issue width and
+    * is topped up as it drains; only the scan distance is bounded.
+    *
+    * @param lookahead blocked requests the issue logic may scan past. 1 is strictly in-order —
+    *                  issue the whole issuable prefix, stop at the first blocked request.
     */
   def bandwidth(
       mapping: Mapping,
@@ -51,9 +57,17 @@ object Arbiter:
     val requests = stream(mapping, support, slices)
     val occupancy = new Array[Int](mapping.banks)
     val window = mutable.ArrayBuffer.empty[Int]
+    // Enough buffer that the issue width is reachable even when the whole scan distance is
+    // occupied by blocked requests.
+    val capacity = issueWidth + lookahead
     var next = 0
     var served = 0L
     var cycles = 0L
+
+    def refill(): Unit =
+      while window.length < capacity && next < requests.length do
+        window += requests(next)
+        next += 1
 
     while served < requests.length do
       // Banks serve first, so a queue freed this cycle can be refilled in the same one.
@@ -62,21 +76,20 @@ object Arbiter:
           occupancy(bank) -= 1
           served += 1
 
-      while window.length < lookahead && next < requests.length do
-        window += requests(next)
-        next += 1
+      refill()
 
-      // The window is refilled at the cycle boundary only. Refilling inside this loop would let
-      // the scan walk up to `lookahead + issueWidth - 1` requests past the blocked head, which is
-      // not what the parameter means.
+      // Blocked requests stay at positions 0 until scanned, so bounding `scanned` by `lookahead`
+      // bounds exactly how many of them may be passed over. Successful issues top the window back
+      // up, which is what lets the issue width be reached without widening the scan.
       var issued = 0
       var scanned = 0
 
-      while issued < issueWidth && scanned < window.length do
+      while issued < issueWidth && scanned < math.min(window.length, lookahead) do
         if occupancy(window(scanned)) < queueDepth then
           occupancy(window(scanned)) += 1
           window.remove(scanned)
           issued += 1
+          refill()
         else scanned += 1
 
       cycles += 1

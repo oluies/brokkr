@@ -692,10 +692,11 @@ Bad silicon, fine Scala.</p>
   <path class="arrow" d="M 740 250 L 766 250" marker-start="url(#ah)" marker-end="url(#ah)"/>
   <path class="arrow" d="M 859 290 L 859 326" marker-end="url(#ah)"/>
 </svg>
-<figcaption>Two different shuffles, which it is easy to conflate. The Omega fabric on the right
-moves amplitudes between the lanes and the banks, where the stride is set by the qubit support and
-is genuinely a bit permutation. The Benes network inside the permute path routes the
-<em>operator's</em> permutation, which measurement shows is usually not a bit permutation at all.
+<figcaption>Two different shuffles, which it is easy to conflate. The fabric on the right moves
+amplitudes between the lanes and the banks; the Benes network inside the permute path routes the
+<em>operator's</em> permutation. Both turn out to need more than an Omega network, for different
+reasons — the operator's permutation is usually arbitrary, and the memory side is affine rather
+than a bit permutation once the bank mapping is composed with the stride.
 The dense path is the one a CUTE-derived design gives you for free — <code>ABMatrixReg</code>
 becomes <code>OperatorReg</code>, <code>MatrixTE</code> and <code>ReducePE</code> become
 <code>ComplexMAC</code>, and <code>OmegaNetworkRouter</code> carries over almost unchanged, since a
@@ -713,7 +714,7 @@ would leave most of its area idle on real circuits.</figcaption>
     <tr><td>TaskController</td><td>TaskController</td><td class="note">reusable; descriptors become fused-block records</td></tr>
     <tr><td>ABMatrixReg</td><td>OperatorReg</td><td class="note">reusable shape; complex rather than real entries</td></tr>
     <tr><td>MatrixTE / ReducePE</td><td>ComplexMAC</td><td class="note">real MACs become complex; CUTEFPE is the FPU source</td></tr>
-    <tr><td>OmegaNetworkRouter</td><td>same</td><td class="note">the best fit of the lot — qubit stride <em>is</em> a bit permutation</td></tr>
+    <tr><td>OmegaNetworkRouter</td><td>Benes</td><td class="note">the fabric carries over, the topology does not: both shuffles need more than Omega</td></tr>
     <tr><td>A/B/C MemoryLoader</td><td>AmplitudeLoader</td><td class="note">new address generator: <code>nthCleared</code>, not convolution tiling</td></tr>
     <tr><td>XSAICache</td><td>same</td><td class="note">reusable as-is for n beyond on-chip</td></tr>
     <tr><td>CuteDifftest / CUTEFPE</td><td>Scotty</td><td class="note">golden model already exists and is tested</td></tr>
@@ -907,10 +908,10 @@ would leave most of its area idle on real circuits.</figcaption>
     <th>mapping</th><th>in order</th><th>look 8</th><th>look 32</th><th>look 256</th><th>ceiling</th>
   </tr></thead>
   <tbody>
-    <tr><td>low bits</td><td>1.0</td><td>1.2</td><td><strong>2.1</strong></td><td>9.4</td><td>32</td></tr>
-    <tr><td>xor fold</td><td>1.0</td><td>5.3</td><td>9.5</td><td>28.8</td><td>32</td></tr>
-    <tr><td>distinct</td><td>1.0</td><td>8.0</td><td>10.6</td><td>16.0</td><td>32</td></tr>
-    <tr class="hi"><td>ext. Hamming</td><td>1.0</td><td>8.0</td><td><strong>19.1</strong></td><td>31.7</td><td>32</td></tr>
+    <tr><td>low bits</td><td><strong>1.1</strong></td><td>1.2</td><td>2.1</td><td>9.7</td><td>32</td></tr>
+    <tr><td>xor fold</td><td>5.3</td><td>5.8</td><td>10.3</td><td>29.4</td><td>32</td></tr>
+    <tr><td>distinct</td><td>9.6</td><td>9.6</td><td>11.3</td><td>16.0</td><td>32</td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td><strong>18.2</strong></td><td>18.2</td><td>20.1</td><td>31.7</td><td>32</td></tr>
   </tbody>
 </table>
 </div>
@@ -925,25 +926,26 @@ would leave most of its area idle on real circuits.</figcaption>
     <span class="mono">2<sup>k</sup></span> of its accesses to one bank, so the issue window has to
     reach <em>past an entire slice</em> — 64 requests — before it finds anything for an idle bank.
     Queue depth barely helps: from <span class="mono">q = 1</span> to
-    <span class="mono">q = 16</span> low bits moves 1.9 → 2.8, while extended Hamming moves
-    16.7 → 30.7.</p>
-    <p>Note the first column. <strong>Strictly in-order issue caps every mapping at 1.0</strong>,
-    because a window holding one request can issue at most one per cycle whatever its bank — there
-    the window is binding and the mapping is irrelevant. The mapping only starts to matter once
-    there is somewhere to look: at a lookahead of 32 it is worth <strong>9×</strong>, 2.1 against
-    19.1. That is the number to design against, not the per-slice floor and not the optimistic
-    schedule.</p>
+    <span class="mono">q = 16</span> low bits moves 2.0 → 2.9, while extended Hamming moves
+    17.4 → 31.4.</p>
+    <p>In order, with modest queues, <strong>the bank mapping is worth 16× in bandwidth</strong> —
+    1.1 against 18.2. That is the number to design against, not the per-slice floor and not the
+    optimistic schedule.</p>
   </div>
 
   <div class="verdict">
-    <span class="label">What this table said yesterday</span>
-    <p>An earlier version of this page reported 1.1 and 18.2 for the in-order column and called the
-    mapping worth 16×. Both were artifacts of a bug in the model: the issue window was refilled
-    <em>inside</em> the issue loop, so a cycle's scan could walk <span class="mono">lookahead +
-    issueWidth − 1</span> requests past the blocked head rather than <span class="mono">lookahead</span>.
-    Every intermediate column was optimistic by an amount that depended on how many requests
-    happened to issue that cycle, and the in-order column was not in-order at all. The numbers above
-    are from the corrected model.</p>
+    <span class="label">This table went round a loop</span>
+    <p>A review observed that the model's <code>lookahead</code> parameter did not bound what it
+    claimed, because the issue window was refilled inside the issue loop. Correcting it by moving
+    the refill to the cycle boundary <em>also</em> made <code>lookahead</code> the window capacity,
+    which caps throughput at <span class="mono">lookahead</span> accesses per cycle — and that
+    produced a table reading 1.0 everywhere in order and exactly 8.0 at look 8, which is the cap
+    rather than any property of a bank mapping. A second review caught that.</p>
+    <p>The model now sizes its window to reach the issue width and bounds only the scan distance,
+    which is what the parameter always claimed to mean. Doing so <strong>reproduces the original
+    numbers</strong>: the first version's figures were right and its code was unclear, the
+    correction was wrong, and the version above is both. The intermediate 9× figure, published here
+    for part of a day, was an artifact of the fix rather than of the original.</p>
   </div>
 
   <h3>The crossbar is the easy half</h3>
