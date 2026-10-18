@@ -9,7 +9,7 @@
 set -euo pipefail
 
 module="${1:?usage: scripts/verilate.sh <Module>}"
-netlist="build/${module}.sv"
+netlist="build/${module}/${module}.sv"
 bench="rtl/src/test/sv/${module}Tb.sv"
 
 for f in "$netlist" "$bench"; do
@@ -21,6 +21,6 @@ verilator --binary -j 0 --timing \
   --top-module "${module}Tb" \
   -Mdir "build/verilator-${module}" \
   -o "${module}Tb" \
-  "$netlist" "$bench"
+  "build/${module}"/*.sv "$bench"
 
 "build/verilator-${module}/${module}Tb"

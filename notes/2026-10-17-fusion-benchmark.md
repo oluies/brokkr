@@ -1129,7 +1129,7 @@ whatever width of multiplier array one is willing to build — ten qubits would 
 tile. Now the dimension is independent: the engine loops over `(dimension/tile)²` output blocks,
 each accumulating over the full `dimension`-long inner dimension before being written out.
 
-Measured at tile 4, over eighteen cases — three channels, three states, at both dimensions:
+Measured at tile 4, over eighteen cases - three channels, three states, at both dimensions:
 
 ```
 dimension   blocks per product   cycles per Kraus operator
@@ -1265,3 +1265,128 @@ Worth noting what made it quick to find: the cycle counts were already exactly
 `2·(N/T)²·((N+1)+T)` — 18 and 104 — so the sequencing was provably right and only the data path
 could be wrong. A test that reports structure as well as values narrows a search much faster than
 one that only reports a mismatch.
+
+
+## Addendum 24: rectangular channels, and the gap that closes
+
+Erasure has been recorded as a gap since addendum 20, and it is the one that mattered: it is a
+channel `pctc` uses, not an exotic case. It replaces the input with a flag state on a third basis
+element, so `K` is 3x2 and it maps a qubit to a qutrit. The engine assumed rho, K and the result were
+all one square size, so it could not express erasure at all.
+
+It now carries two dimensions:
+
+```
+rho        inputDim  x inputDim
+K          outputDim x inputDim
+T = K rho  outputDim x inputDim
+R = T K+   outputDim x outputDim
+```
+
+Both products accumulate over `inputDim`, and the only thing that differs between them is the
+block-column count — `inputDim / tile` for the first, `outputDim / tile` for the second. So
+separating the dimensions cost one argument in the tile walk (`advanceTile(colLimit)`) and nothing
+else in the control. That was the prediction when the gap was flagged — "mostly separating input and
+output dimensions in the addressing" — and the area measurement below is what confirms it rather
+than merely restating it.
+
+### The storage scheme needed no change whatever
+
+`bank = (row + col) mod tile` with offset `row * (cols/tile) + col/tile` is still a bijection when
+rows != cols. The offset fixes the row and the column's tile; the bank then fixes the column within
+it. `SkewedStore` went from one `dimension` to `rows` and `cols` and the skew itself was untouched.
+
+The requirement that replaced "power of two" is "whole number of tiles", which is what keeps a slice
+inside one row or one column group. Powers of two were never the real constraint, only a sufficient
+one.
+
+### Where the dimensions land, and what gets padded
+
+Lifting erasure over more qubits makes it rectangular without being awkward:
+
+```
+case                shape                tile   blocks/op   cycles/op
+erasure, 1 qubit    2 -> 3, padded to 4     2           6          30
+square,  2 qubits   4 -> 4                  4           2          18
+erasure, 2 qubits   4 -> 6                  2          15         105
+square,  3 qubits   8 -> 8                  4           8         104
+erasure, 3 qubits   8 -> 12                 4          15         195
+```
+
+4 -> 6 and 8 -> 12 need no padding at all at a two- and four-wide array. The bare one-qubit case
+does: three is not a multiple of any array width above one, so its output is zero-padded to four.
+That is exact rather than approximate, because a zero row of `K` contributes nothing to either
+product, and the padding is written into the vectors so the comparison is against the padded answer
+rather than a reshaped one. The cost of padding is `(padded/true)^2` on the second product, so it is
+worth minimising the array width rather than maximising it when a dimension is awkward — hence
+tile 2 for the two cases where 4 does not divide the output.
+
+Blocks are `(outputDim/tile)*(inputDim/tile) + (outputDim/tile)^2`, each `inputDim + 1 + tile`
+cycles. The spec now **asserts** that count rather than reporting it. That is a deliberate change of
+habit from addendum 23: pinning the schedule is what localised the clear-too-early bug to the
+datapath, since the sequencing was provably right. A reported number is a hint; an asserted one is a
+bisection.
+
+### What a rectangular channel costs
+
+```
+engine          shape                 cells     over the array
+ChannelEngine   8 -> 8,  4 operators  384436    +62089 (16%)
+ErasureEngine   8 -> 12, 3 operators  412491    +90144 (22%)
+```
+
+**+7.3% for an output half again as wide**, and the array inside is the same 322347 cells in both.
+The extra splits into +6919 flip-flops and +21136 gates: a 144-cell accumulator instead of 64, and
+1.17x the operand storage (per bank, 112 entries against 96). Control is flat — which is the claim
+above, measured.
+
+The square engine itself moved 384449 -> 384436, thirteen cells, because the load port is now an
+explicit row, column and copy rather than one packed address split by bit position. That had to
+change: a row index into a 12-row operator is not a bit field.
+
+### A check that does not depend on the golden model
+
+The flag state is basis element 2 of the output, and erasure sends weight there that the input had
+nowhere to put. So the corner of the true result is the erasure probability — 0.35, whatever the
+state was. The spec asserts that, and that everything outside the true output comes back exactly
+zero. Both are independent of Scotty, in the same spirit as trace preservation and Hermiticity.
+
+Four channels, twenty-four cases, two dimensions, square and rectangular, tiled, on banked memory.
+Worst deviation from Scotty 1.133e-06, worst trace error 5.722e-06, worst Hermitian asymmetry
+1.907e-06 — and adding the six rectangular cases did not move any of the three.
+
+### A measurement that had to be fixed first
+
+Two configurations of the same generator exposed a hazard in `scripts/area.sh`. Addendum 19 fixed one
+half of it: read every file a generation emitted, because firtool puts submodules in their own files
+and reading the top alone leaves them as blackboxes, which silently reports a design as far smaller
+than it is.
+
+The other half is that submodule file names depend only on shape. `ChannelEngine` and
+`ErasureEngine` both emit a `mem_16x24.sv` — with different port structures, since one holds rho and
+a 16-entry temp and the other only rho — and both emit a `ComplexGemm.sv`, as does the standalone
+`ComplexGemm`. Into one shared `build/`, the later generation overwrites the earlier one's
+submodules, and a synthesis run then measures a design that was never generated. Measured both ways,
+`ErasureEngine` came out 412235 in a shared directory and 412491 in its own: 256 cells of a
+netlist that did not exist.
+
+Generation now goes to `build/<Module>/` and synthesis reads only that directory.
+
+Re-measuring every module under the fix reproduced every published figure except one:
+
+```
+module             published   corrected
+ComplexGemm           322347      322347
+ChannelEngine         384449      384436   (load port changed; see above)
+RegisterStoreTop      113201      113201
+SkewedStoreTop         31520       31627
+DiagonalKernel         20775       20775
+MonomialKernel        159287      159287
+DenseKernel           169577      169577
+```
+
+`SkewedStoreTop` is 31627 cells, not 31520, and its addressing logic 19305 rather than 19198. Its
+flop count was already right at 12322, so the whole of the difference is in the addressing. The
+ratios are unchanged — 5.2x less addressing logic, 3.6x fewer cells — and nothing here concludes
+differently. But the number was wrong, and a measurement tool that can read the wrong file is worth
+more attention than the 0.3% it moved.

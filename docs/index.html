@@ -691,7 +691,7 @@ deep, and the depth sweep above is the evidence that it costs nothing.</p>
 
 <p>Ten against seventy-two is <span class="mono">2 · (N/T)² · (N+1)</span> in both cases — cycles
 grow as <span class="mono">N³/T²</span>, which is the arithmetic of the product rather than anything
-the control adds. Over eighteen cases the worst deviation from Scotty is
+the control adds. Over the eighteen square cases the worst deviation from Scotty is
 1.1 × 10<sup>-6</sup>, the worst trace error 5.7 × 10<sup>-6</sup>, the worst Hermitian asymmetry
 1.9 × 10<sup>-6</sup>.</p>
 
@@ -735,7 +735,7 @@ one sentence.</p>
   <thead><tr><th>store</th><th>cells</th><th>flops</th><th>addressing logic</th></tr></thead>
   <tbody>
     <tr><td>registers, four read muxes</td><td>113 201</td><td>12 480</td><td>100 721</td></tr>
-    <tr class="hi"><td>skewed banks</td><td><strong>31 520</strong></td><td>12 322</td><td><strong>19 198</strong></td></tr>
+    <tr class="hi"><td>skewed banks</td><td><strong>31 627</strong></td><td>12 322</td><td><strong>19 305</strong></td></tr>
   </tbody>
 </table>
 </div>
@@ -762,7 +762,7 @@ exactly once, for the same reason a row slice reads from every bank exactly once
   </tr></thead>
   <tbody>
     <tr><td>registers</td><td>426 119</td><td>+103 772 (24%)</td><td>72</td></tr>
-    <tr class="hi"><td>skewed banks</td><td><strong>384 449</strong></td><td><strong>+62 102 (16%)</strong></td><td>104</td></tr>
+    <tr class="hi"><td>skewed banks</td><td><strong>384 436</strong></td><td><strong>+62 089 (16%)</strong></td><td>104</td></tr>
   </tbody>
 </table>
 </div>
@@ -774,17 +774,121 @@ design is area-limited or throughput-limited — and at ten qubits, where ρ is 
 are not an option at all, the question does not arise.</p>
 
 <p>The numbers are unchanged across the move: 1.1 × 10<sup>-6</sup> worst deviation,
-5.7 × 10<sup>-6</sup> worst trace error, 1.9 × 10<sup>-6</sup> worst Hermitian asymmetry, the same
-eighteen cases. A storage change that altered the arithmetic would be a bug, and this one did not.</p>
+5.7 × 10<sup>-6</sup> worst trace error, 1.9 × 10<sup>-6</sup> worst Hermitian asymmetry, over the
+same cases. A storage change that altered the arithmetic would be a bug, and this one did not.</p>
 
 <p>The accumulator stays in registers, deliberately. It is written a block at a time and read only
 at the end, so it costs no read muxing — unlike the operands, which every lane reads every cycle.
 That is where the 16% that remains mostly sits.</p>
 
-<p>One capability gap remains alongside it: Scotty's <strong>erasure</strong> channel maps dimension
-2 to dimension 3, and this engine assumes ρ, K and the result are all the same square size. That is
-a channel <code>pctc</code> uses, so it is a gap on the motivating workload rather than an exotic
-case.</p>
+<h3>Rectangular channels: erasure</h3>
+
+<p>A Kraus operator does not have to be square, and the channel that forces the point is one
+<code>pctc</code> uses. Scotty's <strong>erasure</strong> channel replaces the input with a flag
+state on a third basis element, so it maps a qubit to a qutrit: K is 3 × 2, and ρ, K and the result
+are three different shapes. For as long as this engine carried one dimension, that was a stated gap
+on the motivating workload. It now carries two.</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>Three shapes, one accumulation depth.</caption>
+  <thead><tr><th>quantity</th><th>shape</th></tr></thead>
+  <tbody>
+    <tr><td>ρ</td><td class="mono">inputDim × inputDim</td></tr>
+    <tr><td>K</td><td class="mono">outputDim × inputDim</td></tr>
+    <tr><td>T = Kρ</td><td class="mono">outputDim × inputDim</td></tr>
+    <tr class="hi"><td>R = TK†</td><td class="mono">outputDim × outputDim</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Both products accumulate over <span class="mono">inputDim</span>, and the <em>only</em> thing that
+differs between them is the block-column count — <span class="mono">inputDim / tile</span> for the
+first, <span class="mono">outputDim / tile</span> for the second. So separating the dimensions costs
+one argument in the tile walk and nothing else in the control. The storage scheme needed no change
+whatever: <span class="mono">bank = (row + col) mod tile</span> with offset
+<span class="mono">row · (cols/tile) + col/tile</span> is still a bijection when rows ≠ cols, since
+the offset fixes the row and the column's tile and the bank then fixes the column within it.</p>
+
+<p>Neither dimension has to be a power of two. Lifting erasure over more qubits gives 4 → 6 and
+8 → 12, and both are whole numbers of tiles exactly. The bare one-qubit case is not — three is not a
+multiple of any array width above one — so its output is zero-padded to four. That is exact rather
+than approximate, because a zero row of K contributes nothing to either product, and the padding is
+written into the vectors so the comparison is against the padded answer rather than a reshaped
+one.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Every shape the engine is now verified on, and what the schedule costs.</caption>
+  <thead><tr>
+    <th>case</th><th>shape</th><th>tile</th><th>blocks per operator</th><th>cycles per operator</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>erasure, 1 qubit</td><td>2 → 3, padded to 2 → 4</td><td>2</td><td>6</td><td>30</td></tr>
+    <tr><td>square, 2 qubits</td><td>4 → 4</td><td>4</td><td>2</td><td>18</td></tr>
+    <tr><td>erasure, 2 qubits</td><td>4 → 6</td><td>2</td><td>15</td><td>105</td></tr>
+    <tr><td>square, 3 qubits</td><td>8 → 8</td><td>4</td><td>8</td><td>104</td></tr>
+    <tr class="hi"><td>erasure, 3 qubits</td><td>8 → 12</td><td>4</td><td>15</td><td>195</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Blocks are <span class="mono">(outputDim/tile)·(inputDim/tile)</span> for the first product plus
+<span class="mono">(outputDim/tile)²</span> for the second, each costing
+<span class="mono">inputDim + 1 + tile</span> cycles. The spec now <em>asserts</em> that count rather
+than reporting it, which is a deliberate change of habit: pinning the schedule is what localised the
+clear-too-early bug of the previous section to the datapath, since the sequencing was provably
+right.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>What a rectangular channel costs in silicon, at dimension eight.</caption>
+  <thead><tr><th>engine</th><th>shape</th><th>cells</th><th>over the array</th></tr></thead>
+  <tbody>
+    <tr><td>ChannelEngine</td><td>8 → 8, 4 operators</td><td>384 436</td><td>+62 089 (16%)</td></tr>
+    <tr class="hi"><td>ErasureEngine</td><td>8 → 12, 3 operators</td><td><strong>412 491</strong></td><td><strong>+90 144 (22%)</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Plus 7.3% for an output half again as wide</strong>, and the array inside is the same
+322 347 cells in both. The extra is +6 919 flip-flops and +21 136 gates: a 144-cell accumulator
+instead of 64, and 1.17× the operand storage. Control is flat, which is the measurement that
+confirms the paragraph above rather than merely restating it. The square engine itself moved
+384 449 → 384 436, because the load port is now an explicit row, column and copy rather than one
+packed address split by bit position — a row index into a 12-row operator is not a bit field.</p>
+
+<h3>A measurement that had to be fixed first</h3>
+
+<p>Two configurations of the same generator exposed a hazard in how area is measured here. One half
+of it was already fixed, once painfully: <code>area.sh</code> reads every file a generation emitted,
+because firtool puts submodules in their own files and reading the top alone leaves them as
+blackboxes &mdash; which once reported this engine as 20 646 cells, smaller than the datapath inside
+it. The other half is that submodule file names depend only on shape. Both engines emit a
+<span class="mono">mem_16x24.sv</span>, with different port structures, and both emit a
+<span class="mono">ComplexGemm.sv</span> &mdash; so into one shared <span class="mono">build/</span>
+the later generation silently overwrites the earlier one's submodules, and a synthesis run measures a
+design that was never generated.</p>
+
+<p>Generation now goes to <span class="mono">build/&lt;Module&gt;/</span> and synthesis reads only
+that directory. Re-measuring everything under the fix reproduced every published figure except one:
+<strong>SkewedStoreTop is 31 627 cells, not 31 520</strong>, and its addressing logic 19 305 rather
+than 19 198. The flop count was already right, the ratios are unchanged at 5.2&times; and 3.6&times;,
+and nothing here concludes differently &mdash; but the number was wrong, and the table above now
+carries the corrected one. A measurement tool that can read the wrong file is worth more attention
+than the 0.3% it moved.</p>
+
+<p>Erasure also brings a check that does not depend on the golden model at all. The flag state is
+basis element 2 of the output, and erasure sends weight there that the input had nowhere to put, so
+the corner of the result is the erasure probability — 0.35, whatever the state was. The spec asserts
+that, and that everything outside the true output comes back exactly zero.</p>
+
+<div class="verdict">
+  <span class="label cool">The gap is closed</span>
+  <p>Four channels, twenty-four cases, two dimensions, square and rectangular, tiled, on banked
+  memory. Worst deviation from Scotty 1.1 × 10<sup>-6</sup> — and <strong>adding the rectangular
+  cases did not move it</strong>.</p>
+</div>
 
 <div class="tablewrap">
 <table class="narrow">

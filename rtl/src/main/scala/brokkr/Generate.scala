@@ -26,7 +26,15 @@ object Generate {
     // The whole engine: a Kraus channel on a three-qubit state with a four-wide array, so the
     // control actually loops over tiles rather than covering the matrix in one pass.
     "ChannelEngine" -> (() =>
-      new ChannelEngine(dimension = 8, krausCount = 4, dataWidth = 24, tile = 4)),
+      new ChannelEngine(inputDim = 8, outputDim = 8, krausCount = 4, dataWidth = 24, tile = 4)),
+    // The same engine on a channel that changes the dimension: erasure over three qubits is
+    // 8 -> 12, so K is 12x8 and the result is 12x12. What the rectangular case costs over the
+    // square one is storage and an accumulator, not control, and this is how that gets weighed.
+    "ErasureEngine" -> (() =>
+      new ChannelEngine(inputDim = 8, outputDim = 12, krausCount = 3, dataWidth = 24, tile = 4) {
+        // It is the same class, so it would otherwise emit over `ChannelEngine.sv`.
+        override def desiredName = "ErasureEngine"
+      }),
     // The same capacity two ways, to weigh skewed SRAM against the register files it replaces.
     "SkewedStoreTop" -> (() => new SkewedStoreTop(8, 4, 24, copies = 4)),
     "RegisterStoreTop" -> (() => new RegisterStoreTop(8, 4, 24, copies = 4))
@@ -42,9 +50,13 @@ object Generate {
         sys.error(s"no such module: $name, have ${modules.keys.toSeq.sorted.mkString(", ")}")
       )
 
+      // One directory per module, not one shared `build/`. Two configurations of the same
+      // generator emit submodules under names that depend only on their shape — `mem_16x24.sv` —
+      // so a shared directory lets the later run silently overwrite the earlier one's submodule
+      // and quietly changes what a synthesis run is measuring.
       ChiselStage.emitSystemVerilogFile(
         build(),
-        args = Array("--target-dir", "build"),
+        args = Array("--target-dir", s"build/$name"),
         // disallowLocalVariables stops CIRCT emitting `automatic logic` inside always blocks,
         // which Yosys rejects with "Invalid nesting of always blocks". Verilator accepts either,
         // so the conservative form costs nothing and keeps one netlist good for both.
@@ -55,7 +67,7 @@ object Generate {
         )
       )
 
-      println(s"wrote build/$name.sv")
+      println(s"wrote build/$name/$name.sv")
     }
   }
 }

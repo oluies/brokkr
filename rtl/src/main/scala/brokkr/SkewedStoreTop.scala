@@ -25,7 +25,7 @@ class SkewedStoreTop(val dimension: Int, val tile: Int, val dataWidth: Int, val 
     val outIm = Output(Vec(tile, SInt(dataWidth.W)))
   })
 
-  val store = new SkewedStore(dimension, tile, dataWidth, copies)
+  val store = new SkewedStore(dimension, dimension, tile, dataWidth, copies)
 
   store.write(io.copy, io.row, io.col, io.writeRe, io.writeIm, io.writeEnable)
   store.readColumn(io.copy, io.row, io.col, io.readEnable && io.column)

@@ -437,7 +437,7 @@ the argument for the density-matrix engine in one sentence.
 | store | cells | flops | addressing logic |
 |---|---|---|---|
 | registers, four read muxes | 113 201 | 12 480 | 100 721 |
-| skewed banks | **31 520** | 12 322 | **19 198** |
+| skewed banks | **31 627** | 12 322 | **19 305** |
 
 **5.2× less addressing logic**, 3.6× fewer cells. The flop counts are near-identical by design: this
 synthesis has no SRAM library, so both store their bits in flip-flops and the whole difference is in
@@ -451,20 +451,86 @@ bank exactly once for the same reason a row slice reads from every bank once.
 | storage | cells | over the array | cycles per Kraus operator |
 |---|---|---|---|
 | registers | 426 119 | +103 772 (24%) | 72 |
-| skewed banks | **384 449** | **+62 102 (16%)** | 104 |
+| skewed banks | **384 436** | **+62 089 (16%)** | 104 |
 
 **40% off the non-datapath cost, for 44% more cycles.** That is the trade: the address muxing goes
 away and the synchronous read plus multi-cycle block write buy it back in time. At ten qubits, where
 ρ is 16 MiB, registers are not an option at all and the question does not arise.
 
-The numbers are unchanged across the move — 1.1e-06, 5.7e-06, 1.9e-06 over the same eighteen cases.
+The numbers are unchanged across the move — 1.1e-06, 5.7e-06, 1.9e-06 over the same cases.
 A storage change that altered the arithmetic would be a bug.
 
-So: **verified at dimension eight, tiled, on banked memory.** Separately, Scotty's `erasure` channel is 2→3 and this
-engine assumes square, which is a gap on a channel `pctc` actually uses.
+**Rectangular channels: erasure.** A Kraus operator does not have to be square, and the channel that
+forces the point is one `pctc` uses. `erasure` replaces the input with a flag state on a third basis
+element, so it maps a qubit to a qutrit: `K` is 3×2, and ρ, `K` and the result are three different
+shapes. For as long as the engine carried one dimension, this was a stated gap. It now carries two:
 
-It costs 342 351 cells against `ComplexGemm`'s 322 347, so **storage, sequencing and accumulation
-are 6%** on top of the multiplier array.
+```
+ρ          inputDim  × inputDim
+K          outputDim × inputDim
+T = Kρ     outputDim × inputDim
+R = TK†    outputDim × outputDim
+```
+
+Both products accumulate over `inputDim`, and the *only* thing that differs between them is the
+block-column count — `inputDim / tile` for the first, `outputDim / tile` for the second. The
+separation therefore costs one argument in the tile walk and nothing else in the control. Neither
+dimension has to be a power of two: lifting erasure over more qubits gives 4→6 and 8→12, both whole
+numbers of tiles exactly. The bare one-qubit case is not — three is not a multiple of any array width
+above one — so its output is zero-padded to four, which is exact rather than approximate, since a
+zero row of `K` contributes nothing to either product.
+
+| case | shape | tile | blocks per operator | cycles per operator |
+|---|---|---|---|---|
+| erasure, 1 qubit | 2→3, padded to 2→4 | 2 | 6 | 30 |
+| square, 2 qubits | 4→4 | 4 | 2 | 18 |
+| erasure, 2 qubits | 4→6 | 2 | 15 | 105 |
+| square, 3 qubits | 8→8 | 4 | 8 | 104 |
+| erasure, 3 qubits | 8→12 | 4 | 15 | 195 |
+
+Blocks are `(outputDim/tile)·(inputDim/tile)` for the first product plus `(outputDim/tile)²` for the
+second, each costing `inputDim + 1 + tile` cycles. The spec now **asserts** that count rather than
+reporting it: pinning the schedule is what localised the clear-too-early bug to the datapath, since
+the sequencing was provably right.
+
+The storage scheme needed no change at all. `bank = (row + col) mod tile` with offset
+`row · (cols/tile) + col/tile` is still a bijection when rows ≠ cols — the offset fixes the row and
+the column's tile, and the bank then fixes the column within it.
+
+| engine | shape | cells | over the array |
+|---|---|---|---|
+| `ChannelEngine` | 8→8, 4 operators | 384 436 | +62 089 (16%) |
+| `ErasureEngine` | 8→12, 3 operators | 412 491 | +90 144 (22%) |
+
+**+7.3% for a 1.5× wider output**, and the array inside is the same 322 347 cells in both. The extra
+is +6 919 flip-flops and +21 136 gates — a 144-cell accumulator instead of 64, and 1.17× the operand
+storage. Control is flat. (The square engine moved 384 449 → 384 436 because the load port is now an
+explicit row, column and copy rather than one packed address split by bit position: a row index into
+a 12-row operator is not a bit field.)
+
+**A measurement that had to be fixed first.** Two configurations of the same generator exposed a
+hazard in how area is measured here. `area.sh` already read every file a generation emitted, because
+firtool puts submodules in their own files and reading the top alone leaves them as blackboxes. The
+other half is that submodule names depend only on shape: both engines emit a `mem_16x24.sv` with
+different port structures, and both emit a `ComplexGemm.sv`, so in one shared `build/` the later
+generation silently overwrites the earlier one's submodules. Generation now goes to `build/<Module>/`
+and synthesis reads only that directory. Re-measuring everything reproduced every published figure
+except one: **`SkewedStoreTop` is 31 627 cells, not 31 520**, and its addressing logic 19 305 rather
+than 19 198. The flop count was already right, the ratios are unchanged at 5.2× and 3.6×, and
+nothing concludes differently — but the number was wrong and the table above now has the right one.
+
+Erasure brings one check that does not depend on the golden model at all. The flag state is basis
+element 2 of the output, and erasure sends weight there that the input had nowhere to put, so the
+corner of the result is the erasure probability — 0.35, whatever the state was. The spec asserts it,
+along with the padding coming back exactly zero.
+
+So: **verified at dimensions 4 and 8 over four channels and twenty-four cases, square and
+rectangular, tiled, on banked memory** — worst deviation 1.1e-06, and adding the rectangular cases
+did not move it.
+
+At dimension 4 the whole engine costs 342 351 cells against `ComplexGemm`'s 322 347, so **storage,
+sequencing and accumulation are 6%** on top of the multiplier array at that size — the 16% and 22%
+above are the same overhead at dimension 8, square and rectangular.
 
 `ComplexGemm` is the datapath under it: a tile×tile array of complex accumulators fed one column of
 A and one row of B per cycle. Its deviation from Scotty is 2.8e-07 over a depth-16 product, no worse than the
@@ -476,7 +542,7 @@ single-multiply kernels, because the accumulator is widened and narrowed only on
 | `MonomialKernel` | 159 287 | 8 | 19 910 |
 | `DenseKernel` | 169 577 | 8 | 21 197 |
 | `ComplexGemm` | 322 347 | 16 | **20 146** |
-| `ChannelEngine` | 342 351 | 16 | — (+6% control) |
+| `ChannelEngine`, dim 4 | 342 351 | 16 | — (+6% control) |
 
 **All four land within 6% of each other at about 20 000 cells per complex MAC.** Every
 architectural difference — phase tables, Benes networks, wide accumulators — is noise against the

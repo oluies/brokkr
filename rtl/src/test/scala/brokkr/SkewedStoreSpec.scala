@@ -24,7 +24,7 @@ class SkewedStoreHarness(val dimension: Int, val tile: Int, val dataWidth: Int) 
     val outIm = Output(Vec(tile, SInt(dataWidth.W)))
   })
 
-  val store = new SkewedStore(dimension, tile, dataWidth, copies = 1)
+  val store = new SkewedStore(dimension, dimension, tile, dataWidth, copies = 1)
 
   store.write(0.U, io.writeRow, io.writeCol, io.writeRe, io.writeIm, io.writeEnable)
   store.readColumn(0.U, io.index, io.position, io.readEnable && io.column)

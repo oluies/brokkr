@@ -13,17 +13,19 @@
 set -euo pipefail
 
 module="${1:?usage: scripts/area.sh <Module>}"
-source_file="build/${module}.sv"
+source_file="build/${module}/${module}.sv"
 
 if [[ ! -f "$source_file" ]]; then
   echo "missing $source_file — run ./mill rtl.runMain brokkr.Generate $module" >&2
   exit 1
 fi
 
-# Every generated module, not just the named one: firtool emits submodules to their own files, and
-# reading the top alone leaves them as blackboxes — which silently reports a design as far smaller
-# than it is. `hierarchy -top` then prunes whatever the named module does not reach.
-sources=$(ls build/*.sv | tr '\n' ' ')
+# Every file this module generated, not just the top: firtool emits submodules to their own files,
+# and reading the top alone leaves them as blackboxes — which silently reports a design as far
+# smaller than it is. Reading only this module's own directory is the other half of that: submodule
+# names depend only on shape, so `mem_16x24.sv` from one configuration would otherwise be read in
+# place of another's. `hierarchy -top` then prunes whatever the named module does not reach.
+sources=$(ls "build/${module}"/*.sv | tr '\n' ' ')
 
 yosys -p "
   read_verilog -sv ${sources}

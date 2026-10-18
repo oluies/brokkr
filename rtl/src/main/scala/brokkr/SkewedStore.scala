@@ -25,24 +25,41 @@ import chisel3.util._
   * stride is regular where a qubit stride is a bit permutation. That contrast is most of the
   * argument for the density-matrix engine in one sentence.
   *
+  * ==Rectangular matrices==
+  * `rows` and `cols` are independent, because a Kraus operator need not be square: the erasure
+  * channel's operators are `3 × 2`. Nothing in the skew cares. The bank is still `(row + col) mod
+  * tile`, the offset within a bank is still `row · (cols / tile) + col / tile`, and that pairing is
+  * still a bijection — the offset fixes the row and the column's tile, and the bank then fixes the
+  * column within it. Neither dimension has to be a power of two; both have to be whole numbers of
+  * tiles, which is what makes a slice stay inside one row or one column group.
+  *
   * Reads are synchronous, so an address issued this cycle produces data the next; callers drive the
   * address a cycle ahead of the consumer.
   *
-  * @param dimension the matrix is `dimension × dimension`
+  * @param rows      how many rows the matrix has; a multiple of `tile`
+  * @param cols      how many columns it has; also a multiple of `tile`
   * @param tile      the number of banks, which is also the slice width
   * @param dataWidth bits per real component
   * @param copies    how many matrices share the store, as the Kraus set does
   */
-class SkewedStore(val dimension: Int, val tile: Int, val dataWidth: Int, val copies: Int) {
-  require(isPow2(dimension) && isPow2(tile) && tile <= dimension, "powers of two, tile within dimension")
+class SkewedStore(
+    val rows: Int,
+    val cols: Int,
+    val tile: Int,
+    val dataWidth: Int,
+    val copies: Int
+) {
+  require(isPow2(tile), "the bank count is a power of two, since the skew is a modulo")
+  require(rows % tile == 0 && cols % tile == 0, "both dimensions are whole numbers of tiles")
   require(copies >= 1, "a store holds at least one matrix")
 
   private val tileBits = log2Ceil(tile)
-  private val dimBits = log2Ceil(dimension)
-  private val columnGroups = dimension / tile
+  private val rowBits = log2Ceil(rows)
+  private val colBits = log2Ceil(cols)
+  private val columnGroups = cols / tile
 
   /** Entries per bank: the whole store divided evenly, which the skew guarantees it is. */
-  val perBank: Int = dimension * dimension * copies / tile
+  val perBank: Int = rows * cols * copies / tile
 
   private val addressBits = log2Ceil(perBank)
   private val re = Seq.fill(tile)(SyncReadMem(perBank, SInt(dataWidth.W)))
@@ -62,7 +79,7 @@ class SkewedStore(val dimension: Int, val tile: Int, val dataWidth: Int, val cop
   def addressOf(copy: UInt, row: UInt, col: UInt): UInt = {
     val within = row * columnGroups.U + (col >> tileBits).asUInt
 
-    (copy * (dimension * columnGroups).U + within)(addressBits - 1, 0)
+    (copy * (rows * columnGroups).U + within)(addressBits - 1, 0)
   }
 
   def write(copy: UInt, row: UInt, col: UInt, valueRe: SInt, valueIm: SInt, enable: Bool): Unit = {
@@ -94,7 +111,7 @@ class SkewedStore(val dimension: Int, val tile: Int, val dataWidth: Int, val cop
     require(valuesRe.length == tile && valuesIm.length == tile, "a slice is one value per lane")
 
     (0 until tile).foreach { lane =>
-      val col = ((tileCol << tileBits).asUInt + lane.U)(dimBits - 1, 0)
+      val col = ((tileCol << tileBits).asUInt + lane.U)(colBits - 1, 0)
 
       write(copy, row, col, valuesRe(lane), valuesIm(lane), enable)
     }
@@ -117,11 +134,11 @@ class SkewedStore(val dimension: Int, val tile: Int, val dataWidth: Int, val cop
 
   /** Issue a column slice: rows `tileRow * tile + lane`, all at `col`. */
   def readColumn(copy: UInt, tileRow: UInt, col: UInt, enable: Bool): Unit =
-    issue(enable, lane => (((tileRow << tileBits).asUInt + lane.U)(dimBits - 1, 0), col), copy)
+    issue(enable, lane => (((tileRow << tileBits).asUInt + lane.U)(rowBits - 1, 0), col), copy)
 
   /** Issue a row slice: row `row`, at columns `tileCol * tile + lane`. */
   def readRow(copy: UInt, row: UInt, tileCol: UInt, enable: Bool): Unit =
-    issue(enable, lane => (row, ((tileCol << tileBits).asUInt + lane.U)(dimBits - 1, 0)), copy)
+    issue(enable, lane => (row, ((tileCol << tileBits).asUInt + lane.U)(colBits - 1, 0)), copy)
 
   private val bankRe = VecInit((0 until tile).map(i => re(i).read(addresses(i), enables(i))))
   private val bankIm = VecInit((0 until tile).map(i => im(i).read(addresses(i), enables(i))))

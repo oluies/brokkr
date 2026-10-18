@@ -9,32 +9,57 @@ import scala.io.Source
   *
   * The engine was first checked on one channel and one state, which was thin for the thing the
   * assessment rests on — the state-vector path it is compared against is checked against randomised
-  * circuits over the whole gate set. This closes that: three channels with different Kraus
-  * structures and counts, three random states each.
+  * circuits over the whole gate set. This closes that: four channels with different Kraus
+  * structures, counts and shapes, with several random states each.
   *
   * Three properties are asserted on every case, and the last two matter most. A channel is trace
   * preserving and maps Hermitian states to Hermitian states, so those hold regardless of what the
   * reference says — a transposed index or a conjugation dropped from the second product breaks them
   * even if the element-wise comparison somehow passes. They are the closest thing here to a check
   * that does not depend on the golden model.
+  *
+  * The fourth channel is '''erasure''', which is rectangular: `2 → 3` on a qubit, `8 → 12` lifted
+  * over three. It was a stated gap for as long as the engine assumed one square dimension, and it is
+  * the case that distinguishes the two dimensions actually being separate from them merely being
+  * spelled separately.
   */
 class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
   val DataWidth = 24
   val FractionBits = Fixed.fractionBits(DataWidth)
   val Scale = BigDecimal(BigInt(1) << FractionBits)
 
-  val Tile = 4
-
   case class Case(
       index: Int,
       name: String,
       krausCount: Int,
-      dimension: Int,
+      inputDim: Int,
+      outputDim: Int,
+      tile: Int,
+      trueInputDim: Int,
+      trueOutputDim: Int,
       rho: Seq[(Double, Double)],
       kraus: Seq[Seq[(Double, Double)]],
       expected: Seq[(Double, Double)]
   ) {
-    def tiled: Boolean = dimension > Tile
+    def square: Boolean = inputDim == outputDim
+
+    def padded: Boolean = inputDim != trueInputDim || outputDim != trueOutputDim
+
+    def shape: String = s"$inputDim->$outputDim at tile $tile"
+
+    /** Every block of both products, each an `inputDim`-deep accumulation plus its write.
+      *
+      * `T = K · rho` is `outputDim × inputDim` and `R = T · K†` is `outputDim × outputDim`, so the
+      * two products differ only in their block-column count. A pass is `inputDim + 1` cycles
+      * because the synchronous read runs a cycle ahead, and a write is `tile` cycles because
+      * `tile` single-ported banks cannot absorb `tile²` values at once.
+      */
+    def cyclesPerOperator: Int = {
+      val inTiles = inputDim / tile
+      val outTiles = outputDim / tile
+
+      (outTiles * inTiles + outTiles * outTiles) * (inputDim + 1 + tile)
+    }
   }
 
   lazy val cases: Seq[Case] = {
@@ -46,8 +71,8 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
       .map(_.trim.split("\\s+").toSeq)
       .toSeq
 
-    def matrix(label: String, caseIndex: Int, operator: Int, d: Int): Seq[(Double, Double)] =
-      (0 until d).flatMap { row =>
+    def matrix(label: String, caseIndex: Int, operator: Int, rows: Int, cols: Int): Seq[(Double, Double)] =
+      (0 until rows).flatMap { row =>
         val entries = fields
           .find(f =>
             f.head == label && f(1).toInt == caseIndex && f(2).toInt == operator && f(3).toInt == row
@@ -56,22 +81,27 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
           .split(",")
           .map(_.toDouble)
 
-        (0 until d).map(col => (entries(2 * col), entries(2 * col + 1)))
+        (0 until cols).map(col => (entries(2 * col), entries(2 * col + 1)))
       }
 
     fields.filter(_.head == "case").map { f =>
       val index = f(1).toInt
       val count = f(3).toInt
-      val d = f(4).toInt
+      val inputDim = f(4).toInt
+      val outputDim = f(5).toInt
 
       Case(
         index,
         f(2),
         count,
-        d,
-        matrix("rho", index, 0, d),
-        (0 until count).map(matrix("k", index, _, d)),
-        matrix("result", index, 0, d)
+        inputDim,
+        outputDim,
+        f(6).toInt,
+        f(7).toInt,
+        f(8).toInt,
+        matrix("rho", index, 0, inputDim, inputDim),
+        (0 until count).map(matrix("k", index, _, outputDim, inputDim)),
+        matrix("result", index, 0, outputDim, outputDim)
       )
     }
   }
@@ -88,25 +118,22 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
     var out = Seq.empty[(Double, Double)]
     var taken = 0
 
-    simulate(new ChannelEngine(c.dimension, c.krausCount, DataWidth, Tile)) { dut =>
-      c.rho.zipWithIndex.foreach { case ((re, im), address) =>
-        dut.io.writeEnable.poke(true.B)
-        dut.io.writeKraus.poke(false.B)
-        dut.io.writeAddr.poke(address.U)
-        dut.io.writeRe.poke(fixed(re).S)
-        dut.io.writeIm.poke(fixed(im).S)
-        dut.clock.step()
-      }
-
-      c.kraus.zipWithIndex.foreach { case (operator, index) =>
-        operator.zipWithIndex.foreach { case ((re, im), cell) =>
+    simulate(new ChannelEngine(c.inputDim, c.outputDim, c.krausCount, DataWidth, c.tile)) { dut =>
+      def load(kraus: Boolean, copy: Int, cols: Int, entries: Seq[(Double, Double)]): Unit =
+        entries.zipWithIndex.foreach { case ((re, im), cell) =>
           dut.io.writeEnable.poke(true.B)
-          dut.io.writeKraus.poke(true.B)
-          dut.io.writeAddr.poke((index * c.dimension * c.dimension + cell).U)
+          dut.io.writeKraus.poke(kraus.B)
+          dut.io.writeCopy.poke(copy.U)
+          dut.io.writeRow.poke((cell / cols).U)
+          dut.io.writeCol.poke((cell % cols).U)
           dut.io.writeRe.poke(fixed(re).S)
           dut.io.writeIm.poke(fixed(im).S)
           dut.clock.step()
         }
+
+      load(kraus = false, 0, c.inputDim, c.rho)
+      c.kraus.zipWithIndex.foreach { case (operator, index) =>
+        load(kraus = true, index, c.inputDim, operator)
       }
 
       dut.io.writeEnable.poke(false.B)
@@ -124,7 +151,7 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
       assert(dut.io.done.peek().litToBoolean, s"case ${c.index} did not finish in $cycles cycles")
 
       taken = cycles
-      out = (0 until c.dimension * c.dimension).map { cell =>
+      out = (0 until c.outputDim * c.outputDim).map { cell =>
         (real(dut.io.outRe(cell).peek().litValue), real(dut.io.outIm(cell).peek().litValue))
       }
     }
@@ -135,14 +162,16 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
   lazy val results: Map[Int, Seq[(Double, Double)]] = runs.view.mapValues(_._1).toMap
 
   "the vectors" should "cover several channels and several states each" in {
-    assert(cases.length == 18, s"expected eighteen cases, found ${cases.length}")
-    assert(cases.exists(_.tiled), "some cases should force the engine to loop over tiles")
-    assert(cases.exists(!_.tiled), "some cases should fit in one tile")
-    assert(cases.map(_.name).distinct.length == 3)
+    assert(cases.length == 24, s"expected twenty-four cases, found ${cases.length}")
+    assert(cases.map(_.name).distinct.length == 4)
+    assert(cases.exists(c => c.outputDim > c.tile), "some cases should force the engine to loop over tiles")
+    assert(cases.exists(c => c.outputDim == c.tile), "some cases should fit in one tile")
     assert(cases.map(_.krausCount).distinct.length > 1, "the cases should differ in Kraus count")
+    assert(cases.exists(!_.square), "some cases should be rectangular")
+    assert(cases.exists(c => !c.square && !c.padded), "a rectangular case should need no padding")
 
     cases.foreach { c =>
-      val trace = (0 until c.dimension).map(i => c.rho(i * c.dimension + i)._1).sum
+      val trace = (0 until c.inputDim).map(i => c.rho(i * c.inputDim + i)._1).sum
 
       withClue(s"case ${c.index} (${c.name}) input: ") {
         assert(math.abs(trace - 1.0) < 1e-9)
@@ -158,7 +187,7 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
         case (((gotRe, gotIm), (wantRe, wantIm)), cell) =>
           worst = worst.max(math.abs(gotRe - wantRe)).max(math.abs(gotIm - wantIm))
 
-          withClue(s"case ${c.index} (${c.name}, dim ${c.dimension}) cell ${cell / c.dimension},${cell % c.dimension}: ") {
+          withClue(s"case ${c.index} (${c.name}, ${c.shape}) cell ${cell / c.outputDim},${cell % c.outputDim}: ") {
             assert(math.abs(gotRe - wantRe) < 1e-5)
             assert(math.abs(gotIm - wantIm) < 1e-5)
           }
@@ -172,7 +201,7 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
     var worst = 0.0
 
     cases.foreach { c =>
-      val trace = (0 until c.dimension).map(i => results(c.index)(i * c.dimension + i)._1).sum
+      val trace = (0 until c.outputDim).map(i => results(c.index)(i * c.outputDim + i)._1).sum
 
       worst = worst.max(math.abs(trace - 1.0))
 
@@ -188,9 +217,9 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
     var worst = 0.0
 
     cases.foreach { c =>
-      for (row <- 0 until c.dimension; col <- 0 until c.dimension) {
-        val (re, im) = results(c.index)(row * c.dimension + col)
-        val (mirrorRe, mirrorIm) = results(c.index)(col * c.dimension + row)
+      for (row <- 0 until c.outputDim; col <- 0 until c.outputDim) {
+        val (re, im) = results(c.index)(row * c.outputDim + col)
+        val (mirrorRe, mirrorIm) = results(c.index)(col * c.outputDim + row)
 
         worst = worst.max(math.abs(re - mirrorRe)).max(math.abs(im + mirrorIm))
 
@@ -204,38 +233,77 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
     info(f"worst Hermitian asymmetry over ${cases.length} cases: $worst%.3e")
   }
 
-  it should "loop over tiles when the state is wider than the array" in {
-    // The cost of tiling is the point: a matrix product is (dimension/tile)^2 blocks of
-    // `dimension` accumulations each, so cycles grow as dimension^3 / tile^2. At tile 4 the
-    // dimension-8 cases do four blocks per product where the dimension-4 cases do one.
-    val byDimension = cases
-      .groupBy(_.dimension)
-      .view
-      .mapValues(group => group.map(c => runs(c.index)._2 / c.krausCount).distinct.sorted)
-      .toMap
+  it should "take exactly the cycles the block schedule predicts" in {
+    // The cost of tiling is the point, and so is pinning it: a product is (rows/tile)x(cols/tile)
+    // blocks of `inputDim` accumulations each, so cycles grow as dimension^3 / tile^2. Asserting
+    // the count rather than reporting it is what caught the clear-too-early bug — the sequencing
+    // was provably right, which left only the datapath.
+    cases.groupBy(c => (c.inputDim, c.outputDim, c.tile)).toSeq.sortBy(_._1).foreach {
+      case ((inputDim, outputDim, tile), group) =>
+        val c = group.head
+        val predicted = c.cyclesPerOperator
 
-    byDimension.toSeq.sortBy(_._1).foreach { case (dimension, perKraus) =>
-      val blocks = (dimension / Tile) * (dimension / Tile)
+        info(s"$inputDim->$outputDim at tile $tile: $predicted cycles per operator, " +
+          s"${group.map(g => runs(g.index)._2).distinct.sorted.mkString("/")} total over " +
+          s"${group.map(_.krausCount).distinct.mkString("/")} operator(s)")
 
-      info(s"dimension $dimension: $blocks block(s) per product, ${perKraus.mkString("/")} cycles per Kraus operator")
+        group.foreach { g =>
+          withClue(s"case ${g.index} (${g.name}, ${g.shape}): ") {
+            assert(runs(g.index)._2 == g.krausCount * predicted)
+          }
+        }
     }
-
-    val small = byDimension(4).head
-    val large = byDimension(8).head
-
-    // Eight times the work — twice the depth, four times the blocks, in each of two products.
-    assert(large > small * 5, s"dimension 8 took $large cycles per operator against $small at 4")
-    assert(cases.filter(_.tiled).forall(c => runs(c.index)._2 > 0))
   }
 
   it should "handle channels with different Kraus counts" in {
-    // Four operators for depolarizing, two for the others. The sequencing is a counter over them,
-    // so a case with a different count exercises a different path through the state machine.
+    // Four operators for depolarizing, three for erasure, two for the others. The sequencing is a
+    // counter over them, so a case with a different count exercises a different path.
     val counts = cases.map(c => c.name -> c.krausCount).distinct.toMap
 
     assert(counts("depolarizing") == 4)
     assert(counts("amplitudeDamping") == 2)
     assert(counts("dephasing") == 2)
+    assert(counts("erasure") == 3)
     info(s"Kraus counts exercised: ${counts.values.toSeq.distinct.sorted.mkString(", ")}")
+  }
+
+  it should "run a channel that changes the dimension" in {
+    // Erasure maps a qubit to a qutrit, so K is 3x2 and the result is one dimension wider than the
+    // state. This was a stated gap while the engine assumed one square size; it is the case that
+    // tells a genuinely separated pair of dimensions from a renamed one.
+    val rectangular = cases.filter(!_.square)
+
+    assert(rectangular.nonEmpty)
+
+    rectangular.groupBy(c => (c.trueInputDim, c.trueOutputDim)).toSeq.sortBy(_._1).foreach {
+      case ((trueIn, trueOut), group) =>
+        val c = group.head
+        val note = if (c.padded) s"padded to ${c.inputDim}->${c.outputDim}" else "exactly"
+
+        info(s"erasure $trueIn->$trueOut, $note, tile ${c.tile}")
+
+        // Everything outside the true output lives only because the dimension was padded up, and
+        // a zero row of K contributes nothing, so it has to come back zero.
+        group.foreach { g =>
+          for (row <- 0 until g.outputDim; col <- 0 until g.outputDim if row >= trueOut || col >= trueOut) {
+            val (re, im) = results(g.index)(row * g.outputDim + col)
+
+            withClue(s"case ${g.index} padding at ($row,$col): ") {
+              assert(math.abs(re) < 1e-9 && math.abs(im) < 1e-9)
+            }
+          }
+        }
+    }
+
+    // The flag state is basis element `trueOutputDim - 1` of the output, and erasure sends weight
+    // there that the input had nowhere to put: the corner of the true result is the erasure
+    // probability, 0.35, whatever the state was.
+    cases.filter(c => c.name == "erasure" && c.trueInputDim == 2).foreach { c =>
+      val corner = results(c.index)((c.trueOutputDim - 1) * c.outputDim + (c.trueOutputDim - 1))._1
+
+      withClue(s"case ${c.index} flag weight: ") {
+        assert(math.abs(corner - 0.35) < 1e-4, f"flag weight is $corner%.6f")
+      }
+    }
   }
 }
