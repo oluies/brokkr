@@ -122,6 +122,49 @@ the bandwidth however deep the window, because its columns are the values 1 to 1
 fifth bank bit — the upper sixteen banks are never addressed. The per-slice model rated it among
 the better mappings (1.27× the floor at k=6) and could not see this.
 
+### The arbiter
+
+```bash
+./mill model.runMain brokkr.model.Arbiter
+```
+
+That schedule allowed any pending access to be served in any order — unlimited reordering and
+unlimited queues. Adding finite per-bank queues, a finite issue width and in-order issue:
+
+| mapping | in order | look 8 | look 32 | look 256 | ceiling |
+|---|---|---|---|---|---|
+| low bits | **1.1** | 1.2 | 2.1 | 9.7 | 32 |
+| xor fold | 5.3 | 5.8 | 10.3 | 29.4 | 32 |
+| distinct | 9.6 | 9.6 | 11.3 | 16.0 | 32 |
+| ext. Hamming | **18.2** | 18.2 | 20.1 | 31.7 | 32 |
+
+This takes back the previous section's conclusion. Low bits does *not* buy its way to full
+bandwidth: with depth-4 queues it reaches 9.7 of 32 even at a lookahead of 256. Each slice sends all
+`2^k` accesses to one bank, so the issue window must reach past an entire slice — 64 requests —
+before it finds work for an idle bank. Queue depth barely helps (q=1→16 moves low bits 2.0→2.9,
+extended Hamming 17.4→31.4).
+
+**In order, with modest queues, the bank mapping is worth 16× in bandwidth.** That is the number to
+design against.
+
+### The crossbar
+
+```bash
+./mill model.runMain brokkr.model.Crossbar
+```
+
+Lane `l` holds the amplitude at `base + offset(l)`, and `offset` is linear in `l`, so
+`bank(l) = L(base) ^ L(offset(l))` is **affine** in the lane index, with linear part equal to `L`'s
+columns at the support. Classifying every gather confirms it: a gather is affine, or it conflicts
+and is not a permutation of lanes at all. Nothing is ever arbitrary — against 58.8% for the operator
+permutations.
+
+But bit permutations are nearly absent (0–1.4%), so Omega is not enough here either. The address
+stride *is* a bit permutation; the bank mapping XORs bits together on the way, and that is exactly
+what makes the gather conflict-free. The two are coupled: **what fixes bank conflicts is what stops
+the crossbar being a bit permutation.** Since a Benes network measured at 1.4% of a datapath, the
+answer is to spend it.
+
 ### Why a Benes network, not an Omega network
 
 `PermutationStudy` fuses randomised circuits and classifies the permutations monomial blocks

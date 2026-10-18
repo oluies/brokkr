@@ -181,7 +181,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: three datapaths measured; banking and schedule modelled ·
+  <p class="meta">17 October 2026 · status: datapaths measured; banking, schedule, arbiter and crossbar modelled ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -828,8 +828,9 @@ would leave most of its area idle on real circuits.</figcaption>
     count. They are also <strong>essentially solved by a handful of XOR gates</strong>: a mapping
     whose columns are a leading one plus five address bits gets the mean within
     <strong>20% of the floor</strong>.</p>
-    <p>This was the stated go/no-go for RTL. It goes — and the schedule below shows the penalty is
-    paid in buffering rather than in bandwidth.</p>
+    <p>This was the stated go/no-go for RTL. It goes — and the two models below show the penalty is
+    paid in buffering, issue logic, or bandwidth, depending on how much reordering you are willing
+    to build.</p>
   </div>
 
   <h3>The schedule, which moves the answer</h3>
@@ -887,11 +888,76 @@ would leave most of its area idle on real circuits.</figcaption>
   That <code>distinct</code> is genuinely capped is the conclusion after fixing the artifact, not
   before it.</p>
 
-  <p>What remains unanswered: this scheduler may serve any pending access, so it is optimistic, and
-  the depths it reports are lower bounds on what real hardware needs. And it still says nothing
-  about routing amplitudes from banks to lanes once fetched — though the permute path's measurement,
-  where a full Benes network cost 1.4% of the datapath, suggests that fabric is not where the
-  difficulty lies.</p>
+  <h3>The arbiter, which takes some of it back</h3>
+
+  <p>That scheduler allowed any pending access to be served in any order — an arbiter with unlimited
+  reordering and unlimited queues. Real hardware has neither, and the three constraints that bite
+  are finite per-bank queues, a finite issue width, and issue that is in order or nearly so. The
+  third is the one that matters: a blocked request stalls everything behind it while other banks sit
+  idle, which is head-of-line blocking, and it is precisely what the optimistic model assumed
+  away.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Bandwidth in accesses per cycle, 32 banks, per-bank queues 4 deep, issue width 32, each
+  mapping on the support it handles worst. “look N” is how far past a blocked request the issue
+  logic may scan. <code>model.runMain brokkr.model.Arbiter</code>.</caption>
+  <thead><tr>
+    <th>mapping</th><th>in order</th><th>look 8</th><th>look 32</th><th>look 256</th><th>ceiling</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>low bits</td><td><strong>1.1</strong></td><td>1.2</td><td>2.1</td><td>9.7</td><td>32</td></tr>
+    <tr><td>xor fold</td><td>5.3</td><td>5.8</td><td>10.3</td><td>29.4</td><td>32</td></tr>
+    <tr><td>distinct</td><td>9.6</td><td>9.6</td><td>11.3</td><td>16.0</td><td>32</td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td><strong>18.2</strong></td><td>18.2</td><td>20.1</td><td>31.7</td><td>32</td></tr>
+  </tbody>
+</table>
+</div>
+
+  <div class="verdict">
+    <span class="label hot">A correction to the correction</span>
+    <p>The previous section said the naive mapping buys its way to full bandwidth with buffering.
+    That was true of an arbiter with unbounded queues and free reordering, and it is <strong>false
+    under realistic issue</strong>: with depth-4 queues low bits reaches 9.7 of 32 even at a
+    lookahead of 256, and 1.1 in order.</p>
+    <p>The reason is a burst-length effect the first model could not express. Each slice sends all
+    <span class="mono">2<sup>k</sup></span> of its accesses to one bank, so the issue window has to
+    reach <em>past an entire slice</em> — 64 requests — before it finds anything for an idle bank.
+    Queue depth barely helps: from <span class="mono">q = 1</span> to
+    <span class="mono">q = 16</span> low bits moves 2.0 → 2.9, while extended Hamming moves
+    17.4 → 31.4.</p>
+    <p>In order, with modest queues, <strong>the bank mapping is worth 16× in bandwidth</strong> —
+    1.1 against 18.2. That is the number to design against, not the per-slice floor and not the
+    optimistic schedule.</p>
+  </div>
+
+  <h3>The crossbar is the easy half</h3>
+
+  <p>Routing amplitudes from banks to lanes turns out to be structurally constrained in a way the
+  operator permutation is not. Lane <span class="mono">l</span> holds the amplitude at
+  <span class="mono">base + offset(l)</span>, and <span class="mono">offset</span> is linear in
+  <span class="mono">l</span>, so</p>
+
+<pre><code>bank(l) = L(base) ⊕ L(offset(l))</code></pre>
+
+  <p>is an <strong>affine</strong> function of the lane index whose linear part is just
+  <span class="mono">L</span>'s columns at the support. Classifying every gather over every support
+  and slice confirms it: a gather is affine or it conflicts and is not a permutation of lanes at
+  all. <strong>Nothing is ever arbitrary</strong>, against 58.8% for the operator permutations the
+  permute path has to route.</p>
+
+  <p>One nuance worth keeping, because the earlier version of this page got it loose. Bit
+  permutations — what an Omega network routes natively — are almost absent here, at 0 to 1.4%
+  depending on the mapping. The address stride <em>is</em> a bit permutation of the index, but the
+  bank mapping XORs bits together on the way, and that is exactly what makes the gather
+  conflict-free. So the two are coupled: <strong>the thing that fixes bank conflicts is the thing
+  that stops the crossbar being a bit permutation</strong>. Since a full Benes network measured at
+  1.4% of a datapath, the resolution is to spend it and stop optimising.</p>
+
+  <p>What is still not modelled: the arbiter above has a single global issue port rather than a
+  per-bank request network, nothing contends for the operator load against amplitude traffic, and
+  there is no refill or writeback path. Those are integration questions for stage 3 rather than
+  feasibility ones.</p>
 </div>
 
 <div class="stage now">
@@ -1000,11 +1066,10 @@ point rather than an incidental one.</p>
   <li><strong>Bank conflicts: answered, and the answer is a bank mapping rather than a fabric.</strong>
   Both shuffle problems that were hiding under one word now have measurements. The operator's
   permutation is usually arbitrary and needs a Benes network, which costs 1.4% of its datapath. The
-  memory-side question is settled by stage 2: the naive low-bits mapping is catastrophic per slice
-  but buys its way to full bandwidth with a window 32 slices deep, while a cheap linear mapping needs
-  8. What remains is that the scheduler modelled is optimistic — any pending access may be served —
-  so its depths are lower bounds on what a real controller needs, and nothing here models the bank
-  arbiter itself.</li>
+  memory-side question is settled by stage 2: with realistic in-order issue and modest queues the
+  bank mapping is worth 16× in bandwidth, 1.1 accesses per cycle against 18.2 of a possible 32. What
+  is not modelled is a per-bank request network, contention between operator loads and amplitude
+  traffic, and any writeback path.</li>
   <li><strong>A bank mapping has to be checked for coverage, not only for conflicts.</strong> One of
   the candidates reaches only half the banks for some supports, capping bandwidth at 50% however
   deep the queue, and the per-slice model rated it among the better ones. The two properties are

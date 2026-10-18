@@ -393,3 +393,58 @@ real effect happened to point the same way, which is the dangerous case.
 The scheduler may serve any pending access, so it is optimistic and its depths are lower bounds on
 what real hardware needs. Nothing here models the bank arbiter, the crossbar from banks to lanes, or
 what happens when a block's operator load contends with its amplitude traffic.
+
+## Addendum 7: the bank arbiter and the crossbar
+
+### The arbiter takes back the previous conclusion
+
+`Schedule` allowed any pending access to be served in any order — unlimited reordering, unlimited
+queues. Adding finite per-bank queues, finite issue width and in-order issue, 32 banks, depth 4,
+width-6 blocks, worst support:
+
+```
+mapping        in order   look 8  look 32  look 256   ceiling
+low bits            1.1      1.2      2.1       9.7        32
+xor fold            5.3      5.8     10.3      29.4        32
+distinct            9.6      9.6     11.3      16.0        32
+ext. Hamming       18.2     18.2     20.1      31.7        32
+```
+
+Addendum 6 said low bits "buys its way to full bandwidth with buffering". **That is false under
+realistic issue.** With depth-4 queues it reaches 9.7 of 32 even at a lookahead of 256.
+
+The reason is a burst-length effect the first model could not express. Each slice sends all `2^k` of
+its accesses to one bank, so the issue window has to reach *past an entire slice* — 64 requests —
+before it finds anything for an idle bank. Queue depth barely helps:
+
+```
+mapping       q=1    q=2    q=4    q=8    q=16
+low bits      2.0    2.1    2.1    2.4    2.9
+xor fold      7.8    8.9   10.3   19.0   28.3
+distinct      9.6   10.1   11.3   13.2   15.9
+ext. Hamming 17.4   18.2   20.1   24.5   31.4
+```
+
+**In order, with modest queues, the bank mapping is worth 16x in bandwidth** — 1.1 against 18.2.
+That is the number to design against, not the per-slice floor and not the optimistic schedule.
+
+### The crossbar is the easy half
+
+Lane `l` holds the amplitude at `base + offset(l)` and `offset` is linear in `l`, so
+
+    bank(l) = L(base) XOR L(offset(l))
+
+is affine in the lane index, its linear part being `L`'s columns at the support. Classifying every
+gather over every support and slice confirms it: a gather is affine, or it conflicts and is not a
+permutation of lanes at all. **Nothing is ever arbitrary**, against 58.8% for operator permutations.
+
+Bit permutations are nearly absent though — 0 to 1.4%. The address stride *is* a bit permutation of
+the index, but the bank mapping XORs bits together on the way, and that is exactly what makes the
+gather conflict-free. **What fixes bank conflicts is what stops the crossbar being a bit
+permutation.** The two are coupled, and since a full Benes network measured at 1.4% of a datapath,
+the resolution is to spend it rather than optimise.
+
+### Not modelled
+
+A single global issue port rather than a per-bank request network; no contention between operator
+loads and amplitude traffic; no refill or writeback path. Stage 3 integration questions.
