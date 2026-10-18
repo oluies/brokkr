@@ -26,7 +26,10 @@ object Generate {
     // The whole engine: a Kraus channel on a three-qubit state with a four-wide array, so the
     // control actually loops over tiles rather than covering the matrix in one pass.
     "ChannelEngine" -> (() =>
-      new ChannelEngine(dimension = 8, krausCount = 4, dataWidth = 24, tile = 4))
+      new ChannelEngine(dimension = 8, krausCount = 4, dataWidth = 24, tile = 4)),
+    // The same capacity two ways, to weigh skewed SRAM against the register files it replaces.
+    "SkewedStoreTop" -> (() => new SkewedStoreTop(8, 4, 24, copies = 4)),
+    "RegisterStoreTop" -> (() => new RegisterStoreTop(8, 4, 24, copies = 4))
   )
 
   /** `Generate [module ...]`, or no arguments for all of them. Writes into `build/`. */

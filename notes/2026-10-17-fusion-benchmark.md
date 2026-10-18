@@ -1168,3 +1168,60 @@ Verified at dimension eight, with the loop that reaches further. What stands bet
 qubits is a memory, not an idea.
 
 Erasure remains unsupported: 2 -> 3, and this engine assumes square throughout.
+
+
+## Addendum 22: skewed storage, and the banking problem returning
+
+At dimension eight the storage and its address muxing were already 24% of the engine, and at ten
+qubits `rho` alone is 16 MiB. It belongs in memory — and putting it there brings back the problem
+the state-vector half of this project spent its length on, in a much kinder form.
+
+A tiled product reads two slices per cycle:
+
+- a **column slice**, `tile` consecutive rows at one column, for the left operand;
+- a **row slice**, one row at `tile` consecutive columns, for the right operand.
+
+Bank by row and the column slice spreads while the row slice collides. Bank by column and the
+reverse. The classical answer is to **skew**: `bank = (row + col) mod tile`. A column slice varies
+the row with the column fixed and a row slice does the reverse, so each walks the banks one step at
+a time and neither ever repeats one.
+
+`SkewedStore` implements it and `SkewedStoreSpec` checks every slice of both shapes reads back
+correctly, plus that the store divides evenly — 16 entries in each of 4 banks.
+
+### The same shape of result, far more cheaply
+
+This is section 08's bank mapping again: make a strided access conflict-free by choosing where
+addresses land. There it needed a parity-check matrix of a code with minimum distance `k+1`, because
+a qubit stride is a bit permutation and an arbitrary support must be served. Here a `+` and a mask
+suffice, because a GEMM stride is regular.
+
+**That contrast is most of the argument for the density-matrix engine in one sentence.**
+
+### What it costs
+
+Same capacity — an 8x8 matrix in four copies, 24-bit components:
+
+```
+store                        cells    flops   addressing logic
+registers, four read muxes  113201    12480             100721
+skewed banks                 31520    12322              19198
+```
+
+5.2x less addressing logic, 3.6x fewer cells overall.
+
+The flop counts are near-identical and deliberately so: this synthesis has no SRAM library, so both
+forms store their bits in flip-flops and the entire difference is in how they are reached — four
+independent full-width read muxes against one decoder per bank. A flow with real memory macros would
+widen the gap again, since bitcells replace the flops too. **That is not measured here and is not
+claimed.**
+
+### What integration needs
+
+Plumbing, not ideas, and both items are counted work:
+
+1. Reads are synchronous, so an address must be issued a cycle ahead of the lane consuming it. The
+   step counter runs one cycle longer per block.
+2. A `tile x tile` block can no longer be written in one cycle: `tile` single-ported banks cannot
+   absorb `tile²` writes. It spreads over `tile` cycles, one block row at a time, each row touching
+   every bank exactly once — which is the same skew property read in the other direction.

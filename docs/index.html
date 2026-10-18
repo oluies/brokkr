@@ -709,6 +709,50 @@ the control adds. Over eighteen cases the worst deviation from Scotty is
   memory, not an idea.</p>
 </div>
 
+<h3>Storage, and the banking problem returning</h3>
+
+<p>So the next thing is memory, and it brings back the problem the state-vector half of this
+assessment spent its length on — in a much kinder form. A tiled product reads two slices per cycle:
+a <strong>column slice</strong>, <span class="mono">tile</span> consecutive rows at one column, and
+a <strong>row slice</strong>, one row at <span class="mono">tile</span> consecutive columns. Bank by
+row and the column slice spreads while the row slice collides; bank by column and the reverse.</p>
+
+<p>The answer is classical: <strong>skew</strong>, with
+<span class="mono">bank = (row + col) mod tile</span>. A column slice varies the row with the column
+fixed and a row slice does the reverse, so each walks the banks one step at a time and neither ever
+repeats one. <code>SkewedStore</code> implements it, and the spec checks every slice of both shapes
+reads back correctly, plus that the store divides evenly — sixteen entries in each of four banks.</p>
+
+<p>That is the same <em>shape</em> of result as section 08's bank mapping: make a strided access
+conflict-free by choosing where addresses land. It is also far simpler, because a GEMM stride is
+regular where a qubit stride is a bit permutation that needed a code of minimum distance
+<span class="mono">k+1</span>. The contrast is most of the argument for the density-matrix engine in
+one sentence.</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>The same capacity — an 8×8 matrix in four copies, 24-bit components — held two ways.</caption>
+  <thead><tr><th>store</th><th>cells</th><th>flops</th><th>addressing logic</th></tr></thead>
+  <tbody>
+    <tr><td>registers, four read muxes</td><td>113 201</td><td>12 480</td><td>100 721</td></tr>
+    <tr class="hi"><td>skewed banks</td><td><strong>31 520</strong></td><td>12 322</td><td><strong>19 198</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>5.2× less addressing logic</strong>, and 3.6× fewer cells overall. The flop counts are
+near-identical, and deliberately so: this synthesis has no SRAM library, so both forms store their
+bits in flip-flops and the whole difference is in how they are reached — four independent
+full-width read muxes against one decoder per bank. A flow with real memory macros would widen the
+gap again, since bitcells replace the flops too, but that is not measured here and is not claimed.</p>
+
+<p>What remains is the plumbing rather than the idea. Two things change in the engine: reads become
+synchronous, so addresses must be issued a cycle ahead of the lane that consumes them; and a
+<span class="mono">tile × tile</span> block can no longer be written in one cycle, since
+<span class="mono">tile</span> single-ported banks cannot take <span class="mono">tile²</span>
+writes — it spreads over <span class="mono">tile</span> cycles, one block row at a time, each row
+touching every bank once. Both are counted work, not open questions.</p>
+
 <p>One capability gap remains alongside it: Scotty's <strong>erasure</strong> channel maps dimension
 2 to dimension 3, and this engine assumes ρ, K and the result are all the same square size. That is
 a channel <code>pctc</code> uses, so it is a gap on the motivating workload rather than an exotic

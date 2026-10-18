@@ -423,8 +423,32 @@ That share is mostly address muxing on register files — so **the next change i
 control**. At ten qubits ρ alone is 16 MiB: preposterous in registers, ordinary in SRAM, and the
 control above it would not change.
 
-So: **verified at dimension eight, with the loop that reaches further.** What stands between this
-and ten qubits is a memory, not an idea. Separately, Scotty's `erasure` channel is 2→3 and this
+**Storage: the banking problem returns, kindly.** A tiled product reads a *column slice* (`tile`
+rows at one column) and a *row slice* (one row at `tile` columns) each cycle. Bank by row and the
+column slice spreads while the row slice collides; bank by column and the reverse. The classical
+answer is to skew: `bank = (row + col) mod tile`, so each slice walks the banks one step at a time
+and never repeats one. `SkewedStore` implements it; the spec checks every slice of both shapes.
+
+That is the same *shape* of result as the state-vector bank mapping — make a strided access
+conflict-free by choosing where addresses land — and far simpler, because a GEMM stride is regular
+where a qubit stride is a bit permutation needing a code of distance `k+1`. The contrast is most of
+the argument for the density-matrix engine in one sentence.
+
+| store | cells | flops | addressing logic |
+|---|---|---|---|
+| registers, four read muxes | 113 201 | 12 480 | 100 721 |
+| skewed banks | **31 520** | 12 322 | **19 198** |
+
+**5.2× less addressing logic**, 3.6× fewer cells. The flop counts are near-identical by design: this
+synthesis has no SRAM library, so both store their bits in flip-flops and the whole difference is in
+how they are reached. Real memory macros would widen it, but that is not measured here.
+
+Integration is plumbing rather than an idea: reads become synchronous, so addresses are issued a
+cycle ahead; and a `tile × tile` block spreads its write over `tile` cycles, since `tile`
+single-ported banks cannot take `tile²` writes at once.
+
+So: **verified at dimension eight, with the loop that reaches further, and the store it will sit
+on.** Separately, Scotty's `erasure` channel is 2→3 and this
 engine assumes square, which is a gap on a channel `pctc` actually uses.
 
 It costs 342 351 cells against `ComplexGemm`'s 322 347, so **storage, sequencing and accumulation
