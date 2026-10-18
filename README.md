@@ -271,6 +271,41 @@ the engine should be designed to minimise re-tilings, and its arithmetic is free
 32 banks. And off-chip is not obviously slow — HBM at a few TB/s is, at a GHz, well over a hundred
 fp64 complex amplitudes per cycle. The model establishes the crossover, not which side to expect.
 
+### What the host costs
+
+```bash
+./mill model.runMain brokkr.model.DescriptorCost
+```
+
+Every block must be built before it is applied, and that runs on the CPU. Applying a block touches
+every amplitude once, so its cost grows with the *state*; building a dense one is a matrix product
+per gate fused, `O(8^k)`, which grows with the *block* and not with the state at all.
+
+| width | fuse per block | engine per block | ratio | bound by |
+|---|---|---|---|---|
+| 2 | 8.8 µs | 65.5 µs | 0.13× | engine |
+| 4 | 15.7 µs | 65.5 µs | 0.24× | engine |
+| 5 | 24.0 µs | 65.5 µs | 0.37× | engine |
+| 6 | **116.5 µs** | 65.5 µs | **1.78×** | **host** |
+
+Benes routing is not the problem — 1.7 µs at 8 lanes to 5.7 µs at 64, i.e. 0.03–0.09× engine time.
+Operator construction is the whole of it.
+
+**This is a third constraint on the fusion width, and the tightest.** Intensity wanted k=6–8 and
+storage allowed it; the host does not. At 20 qubits k=6 is host-bound. The crossover moves with the
+register (k=6 becomes engine-bound at n≥21) — but 20 qubits is about where a 16 MiB on-chip store
+runs out, so **the sizes at which the engine is host-bound are exactly the sizes at which it fits on
+chip**, which the refill model says is the only place it wins.
+
+The way out is modest: **design at k=5**, comfortably engine-bound at 0.37×, still 6.7 flop/byte.
+
+Caching does not rescue k=6: measured operator reuse is 1.2× (brickwork), 3.1× (Grover), 1.1×
+(diagonal-heavy). A brickwork layer varies its angles and repeats almost nothing.
+
+*Caveats:* this times *this* fusion pass, written for clarity and never optimised, on one core. A
+tuned implementation could move the crossover several times. The structure survives — host cost is
+flat in the state and the engine's is not — but the crossover point would not.
+
 **Writeback halves everything, and need not.** Each amplitude is written back to the same address,
 hence the same bank, so traffic doubles with an identical distribution — extended Hamming goes
 31.4 → 15.7. But

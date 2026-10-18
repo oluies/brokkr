@@ -78,5 +78,8 @@ object model extends ScalaModule {
   // through a file. The banking models above need no such thing and do not use it.
   def mvnDeps = Seq(mvn"xyz.entangled::scotty:0.7.0-SNAPSHOT")
 
+  // For BenesRouter, whose cost is one of the things being measured here.
+  def moduleDeps = Seq(vectors)
+
   def sources = Task.Sources(moduleDir / "src" / "main" / "scala")
 }

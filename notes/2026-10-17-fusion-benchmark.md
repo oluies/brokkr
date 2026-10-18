@@ -871,3 +871,58 @@ part sits depends on a bank count that is a design choice and a memory technolog
 
 **The model establishes the crossover, not which side of it to expect.** That distinction is worth
 keeping given how many times in this file a number has been read as a conclusion.
+
+
+## Addendum 16: the host-side descriptor cost
+
+The last unmodelled piece, and it turns out to bind.
+
+Every block must be built before the engine applies it: gates fused into one operator, the form
+classified, a Benes routing computed if monomial, strides worked out. The asymmetry is not in the
+engine's favour — applying a block touches every amplitude once, so its cost grows with the
+**state**, while building a dense one is a matrix product per gate fused, `O(8^k)`, growing with the
+**block** and not with the state at all.
+
+Measured against an engine at 1 GHz and 32 amplitudes per cycle, 20 qubits:
+
+```
+ width  blocks   fuse/block  engine/block    ratio       bound by
+     2     118        8.8 us        65.5 us    0.13x        engine
+     4      59       15.7 us        65.5 us    0.24x        engine
+     5      51       24.0 us        65.5 us    0.37x        engine
+     6      40      116.5 us        65.5 us    1.78x          host
+```
+
+Benes routing is not the problem: 1.7 us at 8 lanes to 5.7 us at 64, i.e. 0.03 to 0.09 of engine
+time. Operator construction is the whole of it.
+
+*(An earlier version of this measurement reported 56 us per route, which was an artifact of timing
+four blocks with all the surrounding work included. Caught before it was published, unlike some.)*
+
+### A third constraint on the fusion width, and the tightest
+
+Section 03 of the assessment argued for k=6 to 8 from arithmetic intensity, bounded above by
+operator storage. The host adds a third bound and it binds first: **at 20 qubits, k=6 is already
+host-bound**, with the engine waiting 1.78 cycles for every one it works.
+
+The crossover moves with the register, since engine time grows as `2^n` and host time does not —
+k=6 becomes engine-bound at n >= 21. But 20 qubits is about where a 16 MiB on-chip store runs out.
+**So the sizes at which the engine is host-bound are exactly the sizes at which it fits on chip**,
+which the refill model says is the only place it wins. The two constraints close on the same point
+from opposite sides.
+
+The way out is modest: design at **k=5**. Comfortably engine-bound at 0.37x, still 6.7 flop/byte and
+a 16 KiB operator, and the measurements elsewhere say intensity was never the binding constraint.
+
+### Caching does not rescue k=6
+
+Measured operator reuse: 1.2x on brickwork, 3.1x on Grover, 1.1x on diagonal-heavy. Grover repeats
+its oracle; a brickwork layer varies its angles and repeats almost nothing.
+
+### Caveats, both pointing the same way
+
+This times *this* fusion pass — written for clarity in Scala 3, never optimised — on one core
+preparing for one engine. A tuned implementation in a systems language could plausibly move the
+crossover by several times, and a real host would use several cores. The *structure* of the finding
+survives both, because host cost is flat in the state and the engine's is not. The particular
+crossover point would not.

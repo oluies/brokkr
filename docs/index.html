@@ -289,14 +289,16 @@ slices of the state. Counting the operator load, the modelled intensity is:</p>
 </table>
 </div>
 
-<p>Two things bound <span class="mono">k</span> from above, and neither is the intensity. The fused
-operator has to <strong>fit in whatever register file or scratchpad feeds the multipliers</strong>
+<p>Two things bound <span class="mono">k</span> from above here, and neither is the intensity — a third, tighter one
+appears once the host is measured. The fused operator has to <strong>fit in whatever register file
+or scratchpad feeds the multipliers</strong>
 — <span class="mono">4<sup>k</sup></span> complex entries, so 1 MiB of operand SRAM caps
 <span class="mono">k</span> at 8. And <strong>building</strong> the operator costs a dense
 <span class="mono">2<sup>k</sup></span>-cubed matrix product per gate fused, so it only amortises
-when <span class="mono">n − k</span> is large. Both point at the same design window:
-<span class="mono">k = 6</span> to <span class="mono">8</span>, intensity 16 to 64 flop/byte. That
-is the right range for a systolic array, and it is reachable.</p>
+when <span class="mono">n − k</span> is large. Both point at a design window of <span class="mono">k = 6</span> to
+<span class="mono">8</span>, intensity 16 to 64 flop/byte. <em>That window does not survive the
+host-cost measurement further down the page, which caps the width at 5 for a register that fits on
+chip.</em></p>
 
 <h2><span class="num">04</span>What the measurements actually say</h2>
 
@@ -1189,8 +1191,65 @@ would leave most of its area idle on real circuits.</figcaption>
   part sits depends on a bank count that is a design choice and a memory technology that is not.
   What the model establishes is the crossover, not which side of it to expect.</p>
 
-  <p>Not modelled: the CPU-side cost of computing fusion, Benes routing and bank descriptors per
-  block.</p>
+  <h3>What the host costs</h3>
+
+  <p>Every block has to be built before it can be applied: gates fused into one operator, its form
+  classified, a Benes routing computed if it is monomial, strides worked out. That runs on the CPU,
+  and if it is slower than the engine then none of the datapath matters — the engine starves.</p>
+
+  <p>The asymmetry is not obviously in the engine's favour. Applying a block touches every amplitude
+  once, so its cost grows with the <em>state</em>; building a dense one is a matrix product per gate
+  fused, <span class="mono">O(8<sup>k</sup>)</span>, which grows with the <em>block</em> and not with
+  the state at all.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Measured, not modelled: this project's fusion pass timed as it is, against an engine at
+  1 GHz and 32 amplitudes per cycle applying blocks to a 20-qubit state.
+  <code>model.runMain brokkr.model.DescriptorCost</code>.</caption>
+  <thead><tr>
+    <th>width</th><th>blocks</th><th>fuse per block</th><th>engine per block</th><th>ratio</th><th class="note">bound by</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>2</td><td>118</td><td>8.8 µs</td><td>65.5 µs</td><td>0.13×</td><td class="note">engine</td></tr>
+    <tr><td>4</td><td>59</td><td>15.7 µs</td><td>65.5 µs</td><td>0.24×</td><td class="note">engine</td></tr>
+    <tr class="hi"><td>5</td><td>51</td><td>24.0 µs</td><td>65.5 µs</td><td>0.37×</td><td class="note">engine</td></tr>
+    <tr class="hi"><td>6</td><td>40</td><td><strong>116.5 µs</strong></td><td>65.5 µs</td><td><strong>1.78×</strong></td><td class="note"><strong>host</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+  <p>Benes routing, the other per-block host cost, is not the problem: 1.7 µs at eight lanes to
+  5.7 µs at sixty-four, which is 0.03 to 0.09 of the engine's time. Operator construction is the
+  whole of it.</p>
+
+  <div class="verdict">
+    <span class="label hot">A third constraint on the fusion width, and the tightest one</span>
+    <p>Section 03 argued for <span class="mono">k = 6</span> to <span class="mono">8</span> from
+    arithmetic intensity, bounded above by operator storage. The host adds a third bound and it
+    binds first: at twenty qubits, <strong><span class="mono">k = 6</span> is already host-bound</strong>,
+    and the engine would wait 1.78 cycles for every one it works.</p>
+    <p>The crossover moves with the register, because engine time grows as
+    <span class="mono">2<sup>n</sup></span> while host time does not: <span class="mono">k = 6</span>
+    becomes engine-bound at <span class="mono">n ≥ 21</span>. But twenty qubits is about where a
+    16 MiB on-chip store runs out, so <strong>the sizes at which the engine is host-bound are
+    exactly the sizes at which it fits on chip</strong> — which the refill model says is the only
+    place it wins. The two constraints close on the same point from opposite sides.</p>
+    <p>The way out is modest: <strong>design at <span class="mono">k = 5</span></strong>. It is
+    comfortably engine-bound at 0.37×, still gives 6.7 flop/byte and a 16 KiB operator, and the
+    measurements elsewhere on this page say intensity was never the binding constraint anyway.</p>
+  </div>
+
+  <p>Caching does not rescue <span class="mono">k = 6</span>. A repeated operator need only be built
+  once, and real circuits do repeat — but measured reuse is 1.2× on the brickwork circuit, 3.1× on
+  Grover and 1.1× on the diagonal-heavy one. Grover repeats its oracle; a brickwork layer varies its
+  angles and so repeats almost nothing.</p>
+
+  <p>Two caveats, both pointing the same way. This times <em>this</em> fusion pass, written for
+  clarity in Scala 3 and never optimised; a tuned implementation in a systems language could
+  plausibly move the crossover by several times. And it assumes one core preparing for one engine,
+  where a real host would use several. The structure of the finding would survive both — host cost
+  is flat in the state and the engine's is not — but the particular crossover point would not.</p>
 </div>
 
 <div class="stage now">
