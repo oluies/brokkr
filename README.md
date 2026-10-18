@@ -93,4 +93,12 @@ sbt 'Test/runMain scotty.simulator.fusion.FusionBench grover 10 4'
   that raised the question.
 - [OpenXiangShan/CUTE](https://github.com/OpenXiangShan/CUTE) — the thing this is modelled on.
 
-Apache-2.0.
+---
+
+© 2026 Örjan Lundberg ·
+[GitHub](https://github.com/oluies) ·
+[LinkedIn](https://www.linkedin.com/in/orjanlundberg/) ·
+Source: [github.com/oluies/brokkr](https://github.com/oluies/brokkr) ·
+Built with [Scala 3](https://www.scala-lang.org), [Chisel](https://www.chisel-lang.org) &
+[Mill](https://mill-build.org) ·
+Apache-2.0
