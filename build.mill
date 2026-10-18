@@ -74,5 +74,9 @@ object model extends ScalaModule {
 
   def scalacOptions = Seq("-deprecation", "-feature", "-unchecked", "-release:21")
 
+  // The refill model's input is a fused circuit, so it reads one from Scotty directly rather than
+  // through a file. The banking models above need no such thing and do not use it.
+  def mvnDeps = Seq(mvn"xyz.entangled::scotty:0.7.0-SNAPSHOT")
+
   def sources = Task.Sources(moduleDir / "src" / "main" / "scala")
 }

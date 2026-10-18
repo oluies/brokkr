@@ -213,6 +213,37 @@ state past it. A dense `4^k` operator against `2^n` amplitudes is 0.39% of traff
 0.02% at n=24, k=6. It only matters when the state is small enough to be comparable to the operator
 (50% at n=12), which is the regime with nothing to accelerate.
 
+### Refill
+
+```bash
+./mill model.runMain brokkr.model.Refill
+```
+
+Above the capacity line the state works in tiles, and a block applies to a tile in isolation only if
+every qubit it touches is **local** — inside the address bits the tile spans. Otherwise the state
+must be re-tiled, costing a full traversal of off-chip memory each way. So the figure of merit is
+**passes**, not cycles.
+
+The form lattice returns in a third role: **a diagonal block streams**, scaling each amplitude
+independently, so it applies to a tile whatever its support. Grover's all-qubit controlled `Z` —
+the worst case for the fusion pass — is free here. Monomial and dense blocks need their support
+local.
+
+| workload | blocks | streaming | local | passes | no lookahead | off-chip traffic |
+|---|---|---|---|---|---|---|
+| brickwork | 61 | 16 | 20 | 11 | 16 | 22× the state |
+| Grover | 65 | 4 | 20 | 18 | 25 | 36× |
+| diagonal-heavy | 43 | 39 | 16 | **1** | 3 | **2×** |
+
+An ordinary circuit that spills moves **20–44× the state** through external memory, at which point
+the on-chip datapath is not the bottleneck and the engine has given away its advantage. Capacity
+helps less than expected — 16 to 22 local qubits takes brickwork only from 14 passes to 10, because
+what forces a re-tiling is the circuit's *structure*, not the shortfall in room. Scheduling helps
+more: a 64-block lookahead nearly halves the passes.
+
+A circuit of phases and permutations needs one pass. **The engine is for circuits that fit, or
+circuits that are mostly diagonal.**
+
 **Writeback halves everything, and need not.** Each amplitude is written back to the same address,
 hence the same bank, so traffic doubles with an identical distribution — extended Hamming goes
 31.4 → 15.7. But

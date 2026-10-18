@@ -556,6 +556,15 @@ That is a memory-capacity problem. Any pitch that leads with qubit count is dead
 <code>NullSpace</code> on 2- to 24-dimensional matrices. Iterative, branchy, ill-conditioned, tiny.
 Bad silicon, fine Scala.</p>
 
+<p><strong>The refill model narrows this list.</strong> Measured at 24 qubits, an ordinary circuit
+that spills off chip moves 20 to 44 times the state through external memory, at which point the
+datapath is not the bottleneck and the engine has given away its advantage. A circuit of phases and
+permutations needs one pass. So the three cases above survive only in a sharper form: <strong>small
+enough to fit on chip</strong>, or <strong>diagonal-heavy enough to stream</strong>. The
+density-matrix case is the strongest precisely because it is both — 10 to 12 qubits is
+<span class="mono">4<sup>n</sup></span> entries that fit, and a Kraus channel is a dense
+superoperator applied in place.</p>
+
 <h2><span class="num">07</span>Proposed architecture</h2>
 
 <figure class="diagram">
@@ -1079,9 +1088,60 @@ would leave most of its area idle on real circuits.</figcaption>
   supporting read-modify-write recovers the whole factor of two. That is a memory feature rather
   than an arbiter one, and it is the single largest lever left in the memory path.</p>
 
-  <p>What is genuinely not modelled now: refill from a level below when the state does not fit on
-  chip, and the CPU-side cost of computing fusion, Benes routing and bank descriptors per block.
-  Both are stage-3 questions about a system rather than about this datapath.</p>
+  <h3>Refill, and what it does to the case</h3>
+
+  <p>Everything above assumes the state is on chip. Past about twenty qubits it is not, and the
+  engine works in tiles: load one, apply what can be applied, store it back. A block can be applied
+  to a tile in isolation only if every qubit it touches is <strong>local</strong> — inside the
+  address bits the tile spans. A block reaching above that line needs amplitudes from several tiles
+  at once, so the state has to be re-tiled first, and that costs a full traversal of off-chip memory
+  in each direction.</p>
+
+  <p>So above the capacity line the figure of merit is <strong>passes</strong>, not cycles. And the
+  form lattice comes back, in its third role: a <strong>diagonal block streams</strong>. It scales
+  each amplitude independently, so it can be applied to a tile whatever its support — including a
+  support spanning every qubit in the register. Grover's all-qubit controlled <code>Z</code>, which
+  forced a native escape in the fusion pass and looked like the worst case there, is free here.
+  Monomial and dense blocks move amplitudes between lanes and do need their support local.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Off-chip passes at 24 qubits, scheduling greedily with a 64-block lookahead against no
+  lookahead. A pass is 2<sup>24</sup> amplitudes read and written.
+  <code>model.runMain brokkr.model.Refill</code>.</caption>
+  <thead><tr>
+    <th>workload</th><th>blocks</th><th>streaming</th><th>local</th><th>passes</th>
+    <th>no lookahead</th><th>off-chip traffic</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>brickwork</td><td>61</td><td>16</td><td>20</td><td>11</td><td>16</td><td>22× the state</td></tr>
+    <tr><td></td><td></td><td></td><td>22</td><td>10</td><td>12</td><td>20×</td></tr>
+    <tr><td>Grover</td><td>65</td><td>4</td><td>20</td><td>18</td><td>25</td><td>36×</td></tr>
+    <tr><td></td><td></td><td></td><td>22</td><td>14</td><td>24</td><td>28×</td></tr>
+    <tr class="hi"><td>diagonal-heavy</td><td>43</td><td>39</td><td>16</td><td><strong>1</strong></td><td>3</td><td><strong>2×</strong></td></tr>
+    <tr class="hi"><td></td><td></td><td></td><td>22</td><td><strong>1</strong></td><td>3</td><td><strong>2×</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+  <div class="verdict">
+    <span class="label hot">This narrows where the engine wins</span>
+    <p>An ordinary circuit above the capacity line moves <strong>20 to 44 times the state</strong>
+    through off-chip memory. At that point the on-chip datapath is not the bottleneck and none of
+    the work above matters much: the engine's whole advantage is that its traffic stays on chip, and
+    spilling gives it away.</p>
+    <p>Capacity helps less than one would hope. Going from 16 local qubits to 22 — sixty-four times
+    the on-chip store — takes brickwork only from 14 passes to 10, because what forces a re-tiling
+    is the circuit's <em>structure</em>, blocks reaching across the register, not the shortfall in
+    room. Scheduling helps more than capacity does: a 64-block lookahead nearly halves the passes.</p>
+    <p>And a circuit of phases and permutations needs <strong>one pass</strong>. That is not a
+    detail; it is the shape of the answer. The engine is for circuits that fit, or for circuits that
+    are mostly diagonal.</p>
+  </div>
+
+  <p>Not modelled: the CPU-side cost of computing fusion, Benes routing and bank descriptors per
+  block; and whether a re-tiling can be overlapped with computation rather than stalling it, which
+  would soften the pass count without changing the traffic.</p>
 </div>
 
 <div class="stage now">
