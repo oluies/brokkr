@@ -1139,9 +1139,58 @@ would leave most of its area idle on real circuits.</figcaption>
     are mostly diagonal.</p>
   </div>
 
+  <h3>Overlapping the re-tiling</h3>
+
+  <p>Those passes need not be stalls, and there are two distinct ways to hide them. Only one is
+  interesting.</p>
+
+  <p><strong>Double buffering</strong> prefetches the next tile while computing on the current one,
+  turning a sum into a maximum. Worth 10% to 47% here depending on the bandwidth ratio — useful,
+  unremarkable.</p>
+
+  <p><strong>Folding</strong> is the one that matters. A re-tiling already streams every amplitude
+  past the engine, so a block can be applied as the data goes by rather than queueing behind it.
+  How much work a pass can carry is set by the ratio of on-chip to off-chip bandwidth: while
+  off-chip delivers one amplitude, on-chip can do many blocks' arithmetic on it.</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>Blocks a single transfer pass can carry, and the share of each circuit's computation that
+  folds into its passes. On-chip at 32 amplitudes per cycle, the banking model's figure.
+  <code>model.runMain brokkr.model.Overlap</code>.</caption>
+  <thead><tr>
+    <th>off-chip rate</th><th>blocks per pass</th><th>brickwork folded</th><th>Grover folded</th>
+  </tr></thead>
+  <tbody>
+    <tr class="hi"><td>1</td><td>32</td><td>100%</td><td>100%</td></tr>
+    <tr class="hi"><td>2</td><td>16</td><td>100%</td><td>100%</td></tr>
+    <tr class="hi"><td>4</td><td>8</td><td>100%</td><td>100%</td></tr>
+    <tr><td>8</td><td>4</td><td>72%</td><td>100%</td></tr>
+    <tr><td>16</td><td>2</td><td>36%</td><td>55%</td></tr>
+  </tbody>
+</table>
+</div>
+
+  <div class="verdict">
+    <span class="label hot">The uncomfortable version of a good result</span>
+    <p>While off-chip delivers at most about an eighth of the on-chip rate, <strong>a circuit's
+    entire computation folds into its transfer passes</strong>. The cost of a spilled circuit is
+    then exactly its pass count, and nothing else — not the fusion width, not the bank mapping, not
+    the datapath this page spent its length on. Above the capacity line the engine should be
+    designed to minimise re-tilings, and its arithmetic is free.</p>
+    <p>That is a real answer to “is the traffic a wall or a background cost”: it is a wall, and
+    computation hides behind it completely.</p>
+  </div>
+
+  <p>One caution against reading the regime as settled. The 32-amplitudes-per-cycle on-chip figure
+  is this project's banking model, which chose 32 banks; a wider store would raise it. And off-chip
+  is not obviously slow — HBM at a few terabytes per second is, at a gigahertz, well over a hundred
+  fp64 complex amplitudes per cycle, which is the other side of the table entirely. Where a real
+  part sits depends on a bank count that is a design choice and a memory technology that is not.
+  What the model establishes is the crossover, not which side of it to expect.</p>
+
   <p>Not modelled: the CPU-side cost of computing fusion, Benes routing and bank descriptors per
-  block; and whether a re-tiling can be overlapped with computation rather than stalling it, which
-  would soften the pass count without changing the traffic.</p>
+  block.</p>
 </div>
 
 <div class="stage now">

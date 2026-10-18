@@ -244,6 +244,33 @@ more: a 64-block lookahead nearly halves the passes.
 A circuit of phases and permutations needs one pass. **The engine is for circuits that fit, or
 circuits that are mostly diagonal.**
 
+### Overlapping the re-tiling
+
+```bash
+./mill model.runMain brokkr.model.Overlap
+```
+
+Those passes need not be stalls. Double buffering turns a sum into a maximum, worth 10–47%. The
+interesting one is **folding**: a re-tiling already streams every amplitude past the engine, so a
+block can be applied as the data goes by. How much a pass carries is the ratio of on-chip to
+off-chip bandwidth.
+
+| off-chip rate | blocks per pass | brickwork folded | Grover folded |
+|---|---|---|---|
+| 1 | 32 | 100% | 100% |
+| 4 | 8 | 100% | 100% |
+| 8 | 4 | 72% | 100% |
+| 16 | 2 | 36% | 55% |
+
+While off-chip delivers at most about an eighth of the on-chip rate, **a circuit's entire
+computation folds into its transfer passes**. The cost of a spilled circuit is then exactly its
+pass count — not the fusion width, not the bank mapping, not the datapath. Above the capacity line
+the engine should be designed to minimise re-tilings, and its arithmetic is free.
+
+*Caution:* the 32-amplitudes-per-cycle on-chip figure is this project's banking model, which chose
+32 banks. And off-chip is not obviously slow — HBM at a few TB/s is, at a GHz, well over a hundred
+fp64 complex amplitudes per cycle. The model establishes the crossover, not which side to expect.
+
 **Writeback halves everything, and need not.** Each amplitude is written back to the same address,
 hence the same bank, so traffic doubles with an identical distribution — extended Hamming goes
 31.4 → 15.7. But

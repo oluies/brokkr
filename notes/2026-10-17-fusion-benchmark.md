@@ -818,3 +818,56 @@ channel is a dense superoperator applied in place.
 The CPU-side cost of computing fusion, Benes routing and bank descriptors per block; and whether a
 re-tiling can be overlapped with computation rather than stalling it, which would soften the pass
 count without changing the traffic.
+
+
+## Addendum 15: overlapping the re-tiling
+
+Addendum 14 left the passes as stalls. They need not be, and there are two distinct ways to hide
+them — only one of which matters.
+
+### Double buffering: a sum becomes a maximum
+
+Prefetch the next tile while computing on the current one. Worth 10% to 47% depending on the
+bandwidth ratio. Useful and unremarkable.
+
+```
+brickwork, 61 blocks, 11 re-tilings
+   off-chip  compute  transfer  serial  overlapped  saving  bound by
+          1     1.91     11.00   12.91       11.00     15%  transfer
+          2     1.91      5.50    7.41        5.50     26%  transfer
+          8     1.91      1.38    3.28        1.91     42%   compute
+```
+
+### Folding: the transfer carries the work
+
+A re-tiling already streams every amplitude past the engine, so a block can be applied as the data
+goes by rather than queueing behind it. How much a pass carries is the on-chip to off-chip ratio:
+while off-chip delivers one amplitude, on-chip can do many blocks' arithmetic on it.
+
+```
+ off-chip   blocks per pass   brickwork    Grover
+        1                32        100%      100%
+        2                16        100%      100%
+        4                 8        100%      100%
+        8                 4         72%      100%
+       16                 2         36%       55%
+```
+
+**While off-chip delivers at most about an eighth of the on-chip rate, a circuit's entire
+computation folds into its transfer passes.** The cost of a spilled circuit is then exactly its pass
+count and nothing else — not the fusion width, not the bank mapping, not the datapath that addenda
+1 to 13 are about.
+
+So the answer to "is the traffic a wall or a background cost" is: **a wall, and computation hides
+behind it completely.** Above the capacity line the engine should be designed to minimise
+re-tilings, and its arithmetic is free.
+
+### Do not read the regime as settled
+
+The 32-amplitudes-per-cycle on-chip figure is this project's banking model, which chose 32 banks; a
+wider store raises it. And off-chip is not obviously slow — HBM at a few TB/s is, at a GHz, well
+over a hundred fp64 complex amplitudes per cycle, which is the far side of the table. Where a real
+part sits depends on a bank count that is a design choice and a memory technology that is not.
+
+**The model establishes the crossover, not which side of it to expect.** That distinction is worth
+keeping given how many times in this file a number has been read as a conclusion.
