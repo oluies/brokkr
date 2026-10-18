@@ -746,12 +746,40 @@ bits in flip-flops and the whole difference is in how they are reached — four 
 full-width read muxes against one decoder per bank. A flow with real memory macros would widen the
 gap again, since bitcells replace the flops too, but that is not measured here and is not claimed.</p>
 
-<p>What remains is the plumbing rather than the idea. Two things change in the engine: reads become
-synchronous, so addresses must be issued a cycle ahead of the lane that consumes them; and a
-<span class="mono">tile × tile</span> block can no longer be written in one cycle, since
-<span class="mono">tile</span> single-ported banks cannot take <span class="mono">tile²</span>
-writes — it spreads over <span class="mono">tile</span> cycles, one block row at a time, each row
-touching every bank once. Both are counted work, not open questions.</p>
+<p>The engine now runs on it. Two things changed, both as expected: reads are synchronous, so an
+address is issued a cycle ahead of the lane consuming it and each accumulation pass runs
+<span class="mono">dimension + 1</span> cycles; and a <span class="mono">tile × tile</span> block
+spreads its write over <span class="mono">tile</span> cycles, one block row at a time, since
+<span class="mono">tile</span> single-ported banks cannot absorb <span class="mono">tile²</span>
+writes. That second constraint uses the skew in the other direction — a block row touches every bank
+exactly once, for the same reason a row slice reads from every bank exactly once.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>The engine at dimension eight, tile four, before and after.</caption>
+  <thead><tr>
+    <th>storage</th><th>cells</th><th>over the array</th><th>cycles per Kraus operator</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>registers</td><td>426 119</td><td>+103 772 (24%)</td><td>72</td></tr>
+    <tr class="hi"><td>skewed banks</td><td><strong>384 449</strong></td><td><strong>+62 102 (16%)</strong></td><td>104</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Forty percent off the non-datapath cost, for forty-four percent more cycles.</strong>
+That is the trade, stated plainly: the address muxing goes away and the synchronous read and the
+multi-cycle block write buy it back in time. Which way it is worth taking depends on whether the
+design is area-limited or throughput-limited — and at ten qubits, where ρ is 16 MiB and registers
+are not an option at all, the question does not arise.</p>
+
+<p>The numbers are unchanged across the move: 1.1 × 10<sup>-6</sup> worst deviation,
+5.7 × 10<sup>-6</sup> worst trace error, 1.9 × 10<sup>-6</sup> worst Hermitian asymmetry, the same
+eighteen cases. A storage change that altered the arithmetic would be a bug, and this one did not.</p>
+
+<p>The accumulator stays in registers, deliberately. It is written a block at a time and read only
+at the end, so it costs no read muxing — unlike the operands, which every lane reads every cycle.
+That is where the 16% that remains mostly sits.</p>
 
 <p>One capability gap remains alongside it: Scotty's <strong>erasure</strong> channel maps dimension
 2 to dimension 3, and this engine assumes ρ, K and the result are all the same square size. That is

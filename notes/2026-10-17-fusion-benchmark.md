@@ -1225,3 +1225,43 @@ Plumbing, not ideas, and both items are counted work:
 2. A `tile x tile` block can no longer be written in one cycle: `tile` single-ported banks cannot
    absorb `tile²` writes. It spreads over `tile` cycles, one block row at a time, each row touching
    every bank exactly once — which is the same skew property read in the other direction.
+
+
+## Addendum 23: the engine on banked memory
+
+Integration done. The operands moved from register files to `SkewedStore`, and the two
+consequences anticipated in addendum 22 both materialised exactly as described.
+
+```
+storage        cells    over the array   cycles per Kraus
+registers     426119   +103772 (24%)                   72
+skewed banks  384449    +62102 (16%)                  104
+```
+
+**40% off the non-datapath cost, for 44% more cycles.** The address muxing goes away; the
+synchronous read and the multi-cycle block write buy it back in time. Which way that trade is worth
+taking depends on whether a design is area- or throughput-limited — and at ten qubits, where rho is
+16 MiB, registers are not an option and the question does not arise.
+
+The accumulator stays in registers deliberately: it is written a block at a time and read only at
+the end, so it costs no read muxing, unlike operands that every lane reads every cycle. Most of the
+remaining 16% is there.
+
+Results are unchanged across the move — 1.133e-06 worst deviation, 5.722e-06 worst trace error,
+1.907e-06 worst Hermitian asymmetry, the same eighteen cases. A storage change that altered the
+arithmetic would be a bug.
+
+### The bug it did introduce, and what caught it
+
+First run: every case wrong, trace 0.19 instead of 1.0. Not subtle, and not tiling — the
+dimension-4 case failed too, which immediately ruled out the new loop and pointed at the new
+storage.
+
+`gemm.io.clear` was asserted for the whole of the write state. That was correct when the write was
+one cycle; now it spans `tile` cycles and reads the accumulators throughout, so the first edge
+zeroed them and block rows 1..3 wrote zeros. Clearing only on the last write cycle fixed it.
+
+Worth noting what made it quick to find: the cycle counts were already exactly
+`2·(N/T)²·((N+1)+T)` — 18 and 104 — so the sequencing was provably right and only the data path
+could be wrong. A test that reports structure as well as values narrows a search much faster than
+one that only reports a mismatch.

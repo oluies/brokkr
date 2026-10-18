@@ -77,6 +77,29 @@ class SkewedStore(val dimension: Int, val tile: Int, val dataWidth: Int, val cop
     }
   }
 
+  /** Write a row slice: row `row`, at columns `tileCol * tile + lane`, one value per lane.
+    *
+    * This is the skew read in the other direction. A block row touches every bank exactly once, for
+    * the same reason a row slice reads from every bank exactly once, so a `tile × tile` block can
+    * be written in `tile` cycles with single-ported banks — one block row per cycle.
+    */
+  def writeSlice(
+      copy: UInt,
+      row: UInt,
+      tileCol: UInt,
+      valuesRe: Seq[SInt],
+      valuesIm: Seq[SInt],
+      enable: Bool
+  ): Unit = {
+    require(valuesRe.length == tile && valuesIm.length == tile, "a slice is one value per lane")
+
+    (0 until tile).foreach { lane =>
+      val col = ((tileCol << tileBits).asUInt + lane.U)(dimBits - 1, 0)
+
+      write(copy, row, col, valuesRe(lane), valuesIm(lane), enable)
+    }
+  }
+
   private def issue(enable: Bool, locate: Int => (UInt, UInt), copy: UInt): Unit =
     (0 until tile).foreach { lane =>
       val (row, col) = locate(lane)

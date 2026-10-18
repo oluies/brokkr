@@ -443,12 +443,24 @@ the argument for the density-matrix engine in one sentence.
 synthesis has no SRAM library, so both store their bits in flip-flops and the whole difference is in
 how they are reached. Real memory macros would widen it, but that is not measured here.
 
-Integration is plumbing rather than an idea: reads become synchronous, so addresses are issued a
-cycle ahead; and a `tile × tile` block spreads its write over `tile` cycles, since `tile`
-single-ported banks cannot take `tile²` writes at once.
+The engine now runs on it. Reads are synchronous, so addresses issue a cycle ahead and each pass
+runs `dimension + 1` cycles; and a `tile × tile` block spreads its write over `tile` cycles, one
+block row at a time — which uses the skew in the other direction, since a block row touches every
+bank exactly once for the same reason a row slice reads from every bank once.
 
-So: **verified at dimension eight, with the loop that reaches further, and the store it will sit
-on.** Separately, Scotty's `erasure` channel is 2→3 and this
+| storage | cells | over the array | cycles per Kraus operator |
+|---|---|---|---|
+| registers | 426 119 | +103 772 (24%) | 72 |
+| skewed banks | **384 449** | **+62 102 (16%)** | 104 |
+
+**40% off the non-datapath cost, for 44% more cycles.** That is the trade: the address muxing goes
+away and the synchronous read plus multi-cycle block write buy it back in time. At ten qubits, where
+ρ is 16 MiB, registers are not an option at all and the question does not arise.
+
+The numbers are unchanged across the move — 1.1e-06, 5.7e-06, 1.9e-06 over the same eighteen cases.
+A storage change that altered the arithmetic would be a bug.
+
+So: **verified at dimension eight, tiled, on banked memory.** Separately, Scotty's `erasure` channel is 2→3 and this
 engine assumes square, which is a gap on a channel `pctc` actually uses.
 
 It costs 342 351 cells against `ComplexGemm`'s 322 347, so **storage, sequencing and accumulation
