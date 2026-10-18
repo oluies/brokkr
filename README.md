@@ -13,6 +13,7 @@ All three datapaths exist as RTL. The engine does not. What is here:
 
 - the design assessment in `docs/`, published to GitHub Pages;
 - the measurement record in `notes/`;
+- `model/` — the cycle-approximate model: bank conflicts, in Scala;
 - `rtl/` — Chisel: `AddressGen` (slice addressing), `DiagonalKernel` (phase path),
   `MonomialKernel` (permute path, with a Benes network) and `DenseKernel` (MAC array), each
   verified against Scotty under Verilator;
@@ -60,6 +61,40 @@ Same width (k=3) and format, so this compares datapaths. Three things fall out:
   fusion width: around 64× at k=6;
 - **the shuffle fabric is 1.4% of the permute path**. The thing that looked like the architectural
   risk is a rounding error next to the multipliers.
+
+### Bank conflicts
+
+```bash
+./mill model.runMain brokkr.model.BankReport
+```
+
+Within a slice the `2^k` addresses differ only in the bits at the supported qubit positions, so the
+address set is `base + V` for a linear subspace `V` over GF(2). A linear bank mapping — XOR gates,
+nothing else — then gives `bank(base + v) = bank(base) ^ bank(v)`, so the conflict pattern is
+identical for every slice, and
+
+```
+cycles per slice = 2^(k - rank of the mapping's columns at the support)
+```
+
+which makes the design question a coding-theory one: single-cycle gathering for every width-`k`
+support holds exactly when every `k` columns are independent, i.e. the mapping is the parity check
+of a code with minimum distance `k+1`.
+
+**The obvious mapping never works.** Taking the low address bits leaves every column beyond
+`bankBits` equal to zero, so any block touching a high qubit puts all `2^k` of its addresses in one
+bank — 13.6× the floor at k=6, and never conflict-free at any bank count.
+
+**A cheap XOR mapping essentially fixes it.** With 32 banks, mean cycles as a multiple of the floor:
+
+| mapping | k=3 | k=4 | k=5 | k=6 |
+|---|---|---|---|---|
+| low bits | 5.31× | 9.19× | 15.87× | 13.64× |
+| xor fold | 1.47× | 2.02× | 2.96× | 2.28× |
+| ext. Hamming | 1.06× | 1.20× | 1.55× | **1.20×** |
+
+Single-cycle gathering for *every* support stops being affordable past k=3 (64 banks via extended
+Hamming; 2048 to reach k=5 via BCH), but the mean is what sets throughput.
 
 ### Why a Benes network, not an Omega network
 

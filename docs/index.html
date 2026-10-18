@@ -181,7 +181,7 @@
   <h1>Brokkr</h1>
   <p class="sub">Could a CUTE-style Chisel tensor engine accelerate quantum simulation? A design
   assessment, with the gate-fusion measurements that decide it.</p>
-  <p class="meta">17 October 2026 · status: all three datapaths built, verified and measured ·
+  <p class="meta">17 October 2026 · status: three datapaths measured; bank conflicts answered ·
   <a href="https://github.com/oluies/brokkr">oluies/brokkr</a></p>
 </header>
 
@@ -643,8 +643,9 @@ Bad silicon, fine Scala.</p>
   <text class="s" x="600" y="454">side, not the</text>
   <text class="s" x="600" y="472">operator's own</text>
   <text class="s" x="600" y="490">permutation</text>
-  <text class="cap" x="600" y="516">BANK CONFLICTS</text>
-  <text class="cap" x="600" y="534">UNPROVEN</text>
+  <text class="s" x="600" y="514">banks are XOR-</text>
+  <text class="s" x="600" y="532">mapped: within</text>
+  <text class="cap" x="600" y="554">20% OF FLOOR</text>
 
   <!-- Memory and verification -->
   <rect class="box" x="766" y="70" width="186" height="220" rx="8" stroke-width="1"/>
@@ -755,19 +756,85 @@ would leave most of its area idle on real circuits.</figcaption>
   </ul>
 </div>
 
-<div class="stage">
-  <p class="when">Stage 2 · Scala, no RTL</p>
+<div class="stage now">
+  <p class="when">Stage 2 · done · bank conflicts answered</p>
   <h3>Cycle-approximate model</h3>
-  <p>A performance model of banked scratchpad plus Omega shuffle plus MAC array, driven by real
-  fused-block descriptors. This is where the key uncertainty gets resolved:
-  <strong>does the Omega network actually resolve the qubit-stride bank conflicts for every target
-  index</strong>, or only for some? If it does not, the whole architectural argument weakens and
-  stage 3 should not start.</p>
-  <ul>
-    <li>Bank-conflict analysis across all target-qubit positions and fusion widths.</li>
-    <li>Sweep the flop-to-byte balance to find where the engine beats the exchange rate.</li>
-    <li>Pick the design point: <span class="mono">k</span>, bank count, MAC width, precision.</li>
-  </ul>
+  <p>The bank-conflict question turned out to have an exact answer rather than a statistical one,
+  because of how the addresses are shaped.</p>
+  <p>Within a slice, the <span class="mono">2<sup>k</sup></span> addresses differ only in the bits
+  at the supported qubit positions, so the address set is <span class="mono">base + V</span> where
+  <span class="mono">V</span> is a <em>linear subspace</em> over GF(2) — addition is XOR, since
+  <span class="mono">base</span> is zero at exactly those positions. Any bank mapping worth building
+  is linear too: <span class="mono">bank = L · address</span>, a tree of XOR gates. And then
+  <span class="mono">bank(base + v) = bank(base) ⊕ bank(v)</span>, so the multiset of banks a slice
+  touches is a translate of <span class="mono">L(V)</span> and <strong>its shape does not depend on
+  the slice at all</strong>. Every slice conflicts identically, and</p>
+
+<pre><code>cycles per slice = 2^(k − rank of L's columns at the support)</code></pre>
+
+  <p>which the model checks against counting banks directly, for every slice, rather than trusting
+  the algebra. So the design question is a coding-theory question: a mapping gathers every support
+  of width <span class="mono">k</span> in one cycle <em>if and only if</em> every
+  <span class="mono">k</span> of its columns are linearly independent — that is,
+  <span class="mono">L</span> is the parity-check matrix of a code of minimum distance
+  <span class="mono">k+1</span>.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Bank bits needed so that <em>every</em> support of that width gathers in a single cycle.
+  20 qubits, all supports enumerated exhaustively. “none” means no size tested reaches it.</caption>
+  <thead><tr>
+    <th>width k</th><th>low bits</th><th>xor fold</th><th>distinct</th><th>ext. Hamming</th><th>BCH d=5</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>1</td><td>none</td><td>1</td><td>1</td><td>1</td><td>7</td></tr>
+    <tr><td>2</td><td>none</td><td>none</td><td>5</td><td>6</td><td>11</td></tr>
+    <tr><td>3</td><td>none</td><td>none</td><td>none</td><td><strong>6</strong></td><td>11</td></tr>
+    <tr><td>4</td><td>none</td><td>none</td><td>none</td><td>none</td><td>11</td></tr>
+    <tr><td>5</td><td>none</td><td>none</td><td>none</td><td>none</td><td>11</td></tr>
+    <tr><td>6</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td></tr>
+  </tbody>
+</table>
+</div>
+
+  <p><strong>The obvious mapping never works, at any bank count.</strong> Taking the low address
+  bits leaves every column beyond <span class="mono">bankBits</span> equal to <em>zero</em>, so a
+  block touching a high qubit degenerates completely — all
+  <span class="mono">2<sup>k</sup></span> of its addresses land in one bank. That is the failure the
+  risk was about, and it is as bad as it could be.</p>
+
+  <p>Single-cycle gathering for every support stops being affordable past
+  <span class="mono">k = 3</span>: an extended-Hamming mapping reaches it with 64 banks, and BCH
+  needs 2048 to reach <span class="mono">k = 5</span>. But single-cycle gathering is not what sets
+  throughput — the mean is. At a realistic 32 banks:</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>Mean cycles per slice as a multiple of the floor, 32 banks, all supports.</caption>
+  <thead><tr><th>mapping</th><th>k = 3</th><th>k = 4</th><th>k = 5</th><th>k = 6</th></tr></thead>
+  <tbody>
+    <tr><td>low bits</td><td>5.31×</td><td>9.19×</td><td>15.87×</td><td>13.64×</td></tr>
+    <tr><td>xor fold</td><td>1.47×</td><td>2.02×</td><td>2.96×</td><td>2.28×</td></tr>
+    <tr><td>distinct</td><td>1.04×</td><td>1.19×</td><td>1.61×</td><td>1.27×</td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td>1.06×</td><td>1.20×</td><td>1.55×</td><td><strong>1.20×</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+  <div class="verdict">
+    <span class="label cool">The risk resolves</span>
+    <p>Bank conflicts are real and severe — the naive mapping runs <strong>13.6× over the floor</strong>
+    at the <span class="mono">k = 6</span> design point, and is never conflict-free at any bank
+    count. They are also <strong>essentially solved by a handful of XOR gates</strong>: a mapping
+    whose columns are a leading one plus five address bits gets the mean within
+    <strong>20% of the floor</strong>.</p>
+    <p>This was the stated go/no-go for RTL. It goes.</p>
+  </div>
+
+  <p>Two things this does not answer. It assumes one access per bank per cycle and no queuing, so it
+  is a lower bound on cycles rather than a schedule. And it says nothing about routing amplitudes
+  from banks to lanes once fetched — though the permute path's measurement, where a full Benes
+  network cost 1.4% of the datapath, suggests that fabric is not where the difficulty lies.</p>
 </div>
 
 <div class="stage now">
@@ -873,13 +940,13 @@ point rather than an incidental one.</p>
   the dense path is the minority — which is the architectural point — but not enough to size three
   datapaths against each other. The area cost of the two cheap paths is still unestimated, and a
   wider workload survey should come before anyone commits silicon to a ratio.</li>
-  <li><strong>Bank conflicts, still unproven — but a narrower question than it was.</strong> There
-  were two shuffle problems hiding under one word. The <em>operator's</em> permutation is now
-  settled: it is usually arbitrary, it needs a Benes network rather than an Omega one, and that
-  network costs 1.4% of its datapath. What remains is the <em>memory-side</em> question — whether
-  the amplitude store can serve a block's <span class="mono">2^k</span> strided addresses without
-  bank conflicts at every target index. That one is genuinely a bit-permutation problem, which is
-  what an Omega network is for, and it is the one still unanswered.</li>
+  <li><strong>Bank conflicts: answered, and the answer is a bank mapping rather than a fabric.</strong>
+  Both shuffle problems that were hiding under one word now have measurements. The operator's
+  permutation is usually arbitrary and needs a Benes network, which costs 1.4% of its datapath. The
+  memory-side question is settled by stage 2: the naive low-bits mapping is catastrophic and a
+  cheap linear one gets within 20% of the floor. What remains is a <em>schedule</em> rather than a
+  feasibility question — the model assumes one access per bank per cycle with no queuing, so it
+  bounds cycles from below rather than describing a working controller.</li>
   <li><strong>Operator construction on the critical path.</strong> Fusion costs
   <span class="mono">O(8<sup>k</sup>)</span> per gate on the CPU side. For a latency-bound loop —
   the main motivation — that cost may eat the gain. Caching operators across sweeps with only the

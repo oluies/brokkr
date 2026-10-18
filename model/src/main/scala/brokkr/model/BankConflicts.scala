@@ -103,9 +103,14 @@ object BankConflicts:
   def xorFold(addressBits: Int, bankBits: Int): Mapping =
     Mapping("xor fold", bankBits, Array.tabulate(addressBits)(j => 1 << (j % bankBits)))
 
-  /** Distinct non-zero columns: every two are independent, so conflict-free up to k = 2. */
+  /** Distinct non-zero columns: every two are independent, so conflict-free up to k = 2 — but only
+    * while they last. There are `2^b - 1` non-zero patterns, so beyond that many address bits the
+    * columns must repeat and a pair of repeats collides.
+    */
   def distinct(addressBits: Int, bankBits: Int): Mapping =
-    Mapping("distinct columns", bankBits, Array.tabulate(addressBits)(j => (j + 1) % (1 << bankBits)))
+    val patterns = (1 << bankBits) - 1
+
+    Mapping("distinct", bankBits, Array.tabulate(addressBits)(j => (j % patterns) + 1))
 
   /** Columns `(1, x)` with `x` distinct: every three are independent, so conflict-free up to k = 3.
     *
@@ -114,11 +119,12 @@ object BankConflicts:
     */
   def extendedHamming(addressBits: Int, bankBits: Int): Mapping =
     val tailBits = bankBits - 1
+    val tails = 1 << tailBits
 
     Mapping(
-      "extended Hamming",
+      "ext. Hamming",
       bankBits,
-      Array.tabulate(addressBits)(j => (1 << tailBits) | ((j + 1) % (1 << tailBits)))
+      Array.tabulate(addressBits)(j => (1 << tailBits) | (j % tails))
     )
 
   /** Columns `(1, x, x^3)` over GF(2^m): a BCH parity check with designed distance 5, so every four
@@ -131,7 +137,7 @@ object BankConflicts:
       s"BCH d=5",
       1 + 2 * fieldBits,
       Array.tabulate(addressBits): j =>
-        val x = field.power(j + 1)
+        val x = field.element(j)
 
         (1 << (2 * fieldBits)) | (x << fieldBits) | field.cube(x)
     )
@@ -162,4 +168,4 @@ object BankConflicts:
     def cube(a: Int): Int = multiply(a, multiply(a, a))
 
     /** The `n`-th element in a fixed order; any injection into the field will do. */
-    def power(n: Int): Int = n % size
+    def element(n: Int): Int = n % size

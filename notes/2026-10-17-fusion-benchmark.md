@@ -275,3 +275,71 @@ The earlier note said ChiselSim's svsim does not work with Verilator 5.052. That
 project is now on Chisel 7 and every test runs under Verilator rather than an interpreter.
 chiseltest remains unusable — it stopped at 6.0.0 and its Verilator backend fails to compile its own
 harness against Verilator 5.
+
+## Addendum 5: the cycle-approximate model — bank conflicts
+
+Stage 2 of the roadmap, and the stated go/no-go for RTL. It has an exact answer rather than a
+statistical one.
+
+### The structure collapses the problem
+
+Within a slice the `2^k` addresses differ only in the bits at the supported qubit positions, so the
+address set is `base + V` where `V` is the linear span of `e_q` over GF(2) — addition is XOR,
+because `base` is zero at exactly those positions. A bank mapping worth building is linear too,
+`bank = L * address`, which in hardware is a tree of XOR gates. Then
+
+    bank(base + v) = bank(base) XOR bank(v)
+
+so the multiset of banks a slice touches is a translate of `L(V)`, and **its shape does not depend
+on the slice**. Every slice conflicts identically, and
+
+    cycles per slice = 2^(k - rank of L's columns at the support)
+
+The model checks this against counting banks directly, for every slice, rather than trusting it.
+
+### So it is a coding-theory question
+
+A mapping gathers every width-`k` support in one cycle iff every `k` of its columns are linearly
+independent — iff `L` is the parity-check matrix of a code with minimum distance `k+1`.
+
+Bank bits needed, 20 qubits, all supports enumerated:
+
+```
+  width k      low bits      xor fold      distinct  ext. Hamming       BCH d=5
+        1          none             1             1             1             7
+        2          none          none             5             6            11
+        3          none          none          none             6            11
+        4          none          none          none          none            11
+        5          none          none          none          none            11
+        6          none          none          none          none          none
+```
+
+BCH d=5 reaching k=5 exceeds its guarantee — designed distance 5 only promises every 4 columns
+independent. With only 20 columns drawn from a 32-element field the true distance is higher. Worth
+noting as measured rather than claimed.
+
+### The practical answer
+
+Single-cycle gathering for every support is unaffordable past k=3. It is also not what sets
+throughput. Mean cycles as a multiple of the floor, 32 banks:
+
+```
+mapping         k=3     k=4     k=5     k=6
+low bits      5.31x   9.19x  15.87x  13.64x
+xor fold      1.47x   2.02x   2.96x   2.28x
+distinct      1.04x   1.19x   1.61x   1.27x
+ext. Hamming  1.06x   1.20x   1.55x   1.20x
+```
+
+**The obvious mapping never works at any bank count** — its columns beyond `bankBits` are zero, so a
+block touching a high qubit puts all `2^k` addresses in one bank. **A handful of XOR gates gets
+within 20% of the floor.**
+
+The risk resolves, and it resolves into a bank mapping rather than a fabric.
+
+### What this does not answer
+
+It assumes one access per bank per cycle with no queuing, so it bounds cycles from below rather than
+describing a working memory controller. And it says nothing about routing amplitudes from banks to
+lanes once fetched — though the permute path's measurement, where a full Benes network cost 1.4% of
+the datapath, suggests that fabric is not where the difficulty lies.
