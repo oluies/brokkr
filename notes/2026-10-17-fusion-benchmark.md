@@ -703,3 +703,55 @@ feature I was interested in rather than to the parameter I had actually varied. 
 conclusions have been stable throughout — XOR banking, Benes for both shuffles, queue depth at the
 burst length — while the *causal* claims around them have been wrong repeatedly. Numbers that move
 when a model is corrected deserve more suspicion than numbers that do not.
+
+
+## Addendum 13: where the buffer budget belongs
+
+The question addenda 8 and 10 kept failing to ask. It needed no new model — `Arbiter` already *is* a
+bypassing generator with per-bank queues: `occupancy` is the per-bank queues, the window is the
+reorder buffer, `lookahead` is how far the generator may bypass a full bank. I had been mislabelling
+my own model for three addenda. What was missing was a comparison at equal storage.
+
+A design has some number of request slots and two ways to organise them:
+
+- **partitioned** across banks — a slot only ever serves its own bank, and is stranded when traffic
+  concentrates elsewhere;
+- **pooled** in a reorder window — any slot holds any request, but a blocked request occupies one
+  until its bank drains.
+
+Budget is `banks * depth + window`; every row of a budget spends the same storage.
+
+```
+mapping         budget   pooled    split  partitioned                  best
+                            d=1      d=4      deepest
+low bits            64      2.0        -    2.0 (d=1)      d=1, w=32 -> 2.0
+low bits           256      7.9      5.4    5.4 (d=4)     d=1, w=224 -> 7.9
+low bits           512     15.4     13.9   11.0 (d=8)     d=1, w=480 -> 15.4
+low bits          1024     29.0     28.7  26.6 (d=16)     d=1, w=992 -> 29.0
+low bits          2048     31.9     31.1  28.9 (d=32)    d=1, w=2016 -> 31.9
+
+xor fold           256     26.8     25.2   25.2 (d=4)     d=1, w=224 -> 26.8
+xor fold           512     31.9     31.4   29.7 (d=8)     d=1, w=480 -> 31.9
+
+ext. Hamming       256     29.4     25.4   25.4 (d=4)     d=1, w=224 -> 29.4
+ext. Hamming       512     31.9     31.7   31.4 (d=8)     d=1, w=480 -> 31.9
+```
+
+### Pooled wins, structurally
+
+At every budget and every mapping. The reason is not close: **a bank drains one request per cycle**,
+so a queue deeper than one buys nothing unless the generator cannot refill it — and a generator with
+a reorder window and the freedom to bypass always can. Depth absorbs bursts that bypass has already
+absorbed.
+
+So the instinct that produced addendum 10 — reach for per-bank queues — was backwards. The slots
+belong in the window.
+
+### What the mapping is worth, finally in the right currency
+
+Extended Hamming reaches 31.9 of 32 on a budget of 512 slots. Low bits reaches 15.4 on the same
+budget and needs **2048, four times the storage, to match it**.
+
+That is the first version of this number resting on a comparison between two things that differ in
+exactly one respect. The earlier attempts — 16x in bandwidth, 9x, "a great deal" — were each
+measuring a confound.

@@ -1011,17 +1011,56 @@ would leave most of its area idle on real circuits.</figcaption>
 
   <div class="verdict">
     <span class="label hot">A claim retracted, twice</span>
-    <p>This section has twice carried a conclusion about interconnects that its experiment did not
-    support. First it reported that a request network buys almost nothing, comparing two
-    configurations that shared one bounded window and were therefore nearly the same model. Then it
-    reported the opposite, comparing a queue-depth sweep against a baseline that was capped at 1.0
-    by construction.</p>
-    <p>The honest position is that <strong>nothing here isolates a request network at all</strong>.
-    At equal depth and issue discipline, giving each bank its own queue changes nothing, because an
-    in-order generator still stalls on a full target — the per-bank arrangement is the same
-    algorithm as the arbiter at lookahead 1, and produces the same numbers. What is measured is
-    depth, and separately bypass. Whether a network that decouples them is worth its area is a
-    question this model cannot answer, and the page no longer claims it can.</p>
+    <p>This section twice carried a conclusion about interconnects that its experiment did not
+    support — first that a request network buys almost nothing, then the opposite. Neither
+    comparison isolated what it claimed. The question is posed properly below instead.</p>
+  </div>
+
+  <h3>Where the buffer budget belongs</h3>
+
+  <p>The thing those claims were groping at has a well-posed form. A design has some number of
+  request slots to spend, and two ways to organise them: <strong>partitioned</strong> across banks,
+  where a slot only ever serves its own bank, or <strong>pooled</strong> in a reorder window, where
+  any slot holds any request but a blocked one occupies it until its bank drains. Those are the two
+  classic buffer organisations and they strand storage in opposite situations.</p>
+
+  <p>Asking it that way needed no new model. The arbiter already <em>is</em> a bypassing generator
+  with per-bank queues — <code>occupancy</code> is the queues, the window is the reorder buffer,
+  <code>lookahead</code> is how far the generator may bypass a full bank. What was missing was a
+  comparison at equal storage.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>Accesses per cycle at a fixed budget of request slots, 32 banks, width-6 blocks. Budget
+  is <span class="mono">banks × depth + window</span>; every row of a budget spends the same
+  storage. <code>model.runMain brokkr.model.Budget</code>.</caption>
+  <thead><tr>
+    <th>mapping</th><th>budget</th><th>pooled (d=1)</th><th>split (d=4)</th><th>partitioned</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>low bits</td><td>256</td><td><strong>7.9</strong></td><td>5.4</td><td>5.4 (d=4)</td></tr>
+    <tr><td></td><td>512</td><td><strong>15.4</strong></td><td>13.9</td><td>11.0 (d=8)</td></tr>
+    <tr><td></td><td>2048</td><td><strong>31.9</strong></td><td>31.1</td><td>28.9 (d=32)</td></tr>
+    <tr><td>xor fold</td><td>256</td><td><strong>26.8</strong></td><td>25.2</td><td>25.2 (d=4)</td></tr>
+    <tr><td></td><td>512</td><td><strong>31.9</strong></td><td>31.4</td><td>29.7 (d=8)</td></tr>
+    <tr class="hi"><td>ext. Hamming</td><td>256</td><td><strong>29.4</strong></td><td>25.4</td><td>25.4 (d=4)</td></tr>
+    <tr class="hi"><td></td><td>512</td><td><strong>31.9</strong></td><td>31.7</td><td>31.4 (d=8)</td></tr>
+  </tbody>
+</table>
+</div>
+
+  <div class="verdict">
+    <span class="label cool">Two results, and the second is the one to design against</span>
+    <p><strong>Pooled storage wins at every budget and every mapping</strong>, and structurally
+    rather than narrowly. A bank drains one request per cycle, so a queue deeper than one buys
+    nothing unless the generator cannot refill it — and a generator with a reorder window and the
+    freedom to bypass always can. Depth absorbs bursts that bypass has already absorbed. The earlier
+    instinct to reach for per-bank queues was backwards: the slots belong in the window.</p>
+    <p><strong>What the bank mapping buys is how small that window can be.</strong> Extended Hamming
+    reaches 31.9 of 32 on a budget of 512 slots. Low bits reaches 15.4 on the same budget, and needs
+    <strong>2 048 — four times the storage — to match it</strong>. That is the mapping's value
+    stated in the currency a designer actually spends, and it is the first version of this number
+    that rests on a comparison between two things that differ in one respect.</p>
   </div>
 
   <p><strong>Operator traffic is not in contention.</strong> A block loads its operator once and
@@ -1153,9 +1192,11 @@ point rather than an incidental one.</p>
   permutation is usually arbitrary and needs a Benes network, which costs 1.4% of its datapath. The
   memory-side question is settled by stage 2: under in-order issue with modest queues the bank
   mapping is worth 16× in bandwidth, 1.1 accesses per cycle against 18.2 of a possible 32, and
-  the queue depth around it matters a great deal: it must reach the slice burst length before a
-  concentrating mapping overlaps slices at all. Whether a request network is worth its area is
-  <em>not</em> answered here — no model built so far isolates one. What is also not modelled is
+  the buffer budget around it matters a great deal, and belongs in a pooled reorder window rather
+  than in per-bank queues: a bank drains one request per cycle, so depth beyond one is redundant
+  with the bypass a window already provides. At equal storage the bank mapping is worth four times
+  the budget — extended Hamming reaches 31.9 of 32 on 512 slots where low bits needs 2 048. What is
+  not modelled is
   refill from a level below when the state does not fit on chip, and the CPU-side cost of preparing
   each block's descriptors.</li>
   <li><strong>A bank mapping has to be checked for coverage, not only for conflicts.</strong> One of

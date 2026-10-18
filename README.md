@@ -175,10 +175,38 @@ Depth is one lever, bypass is the other, and they substitute to a degree — ext
 about 30 either by depth 16 with no bypass or by depth 4 with a lookahead of 256.
 
 *Retracted:* this section twice carried a conclusion about interconnects its experiment did not
-support — first that a network buys almost nothing, then the opposite. Nothing here isolates a
-request network: at equal depth and issue discipline, per-bank queues are the same algorithm as the
-arbiter at lookahead 1 and give the same numbers, because an in-order generator still stalls on a
-full target. Whether a network that decouples depth from bypass earns its area is unanswered.
+support — first that a network buys almost nothing, then the opposite. Neither comparison isolated
+what it claimed. The question is posed properly below.
+
+### Where the buffer budget belongs
+
+```bash
+./mill model.runMain brokkr.model.Budget
+```
+
+A design has some number of request slots and two ways to organise them: **partitioned** across
+banks, where a slot only serves its own bank, or **pooled** in a reorder window, where any slot
+holds any request but a blocked one occupies it until its bank drains. Asking it this way needed no
+new model — `Arbiter` already *is* a bypassing generator with per-bank queues (`occupancy` is the
+queues, the window is the reorder buffer, `lookahead` is the bypass distance). What was missing was
+a comparison at equal storage.
+
+| mapping | budget | pooled (d=1) | split (d=4) | partitioned |
+|---|---|---|---|---|
+| low bits | 256 | **7.9** | 5.4 | 5.4 (d=4) |
+| low bits | 512 | **15.4** | 13.9 | 11.0 (d=8) |
+| low bits | 2048 | **31.9** | 31.1 | 28.9 (d=32) |
+| ext. Hamming | 256 | **29.4** | 25.4 | 25.4 (d=4) |
+| ext. Hamming | 512 | **31.9** | 31.7 | 31.4 (d=8) |
+
+**Pooled wins at every budget and mapping**, structurally: a bank drains one request per cycle, so a
+queue deeper than one buys nothing unless the generator cannot refill it — and a generator with a
+reorder window and the freedom to bypass always can. Depth absorbs bursts that bypass has already
+absorbed. The instinct to reach for per-bank queues was backwards; the slots belong in the window.
+
+**What the bank mapping buys is how small that window can be.** Extended Hamming reaches 31.9 of 32
+on 512 slots; low bits reaches 15.4 on the same budget and needs **2048 — four times the storage —
+to match it**. That is the mapping's value in the currency a designer spends.
 
 **Operator traffic is not in contention.** A block loads its operator once and streams the whole
 state past it. A dense `4^k` operator against `2^n` amplitudes is 0.39% of traffic at n=20, k=6 and
