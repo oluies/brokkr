@@ -64,3 +64,15 @@ object rtl extends ScalaModule {
   }
 }
 
+/** The cycle-approximate model: bank conflicts, in Scala rather than RTL.
+  *
+  * Stage 2 of the roadmap. Separate from `vectors` because it answers a design question rather than
+  * feeding a testbench, and separate from `rtl` because it is analysis, not hardware.
+  */
+object model extends ScalaModule {
+  def scalaVersion = "3.9.0"
+
+  def scalacOptions = Seq("-deprecation", "-feature", "-unchecked", "-release:21")
+
+  def sources = Task.Sources(moduleDir / "src" / "main" / "scala")
+}

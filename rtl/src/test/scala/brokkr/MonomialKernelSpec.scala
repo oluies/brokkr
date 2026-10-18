@@ -127,7 +127,7 @@ class MonomialKernelSpec extends AnyFlatSpec with ChiselSim {
     }
 
     info(f"worst deviation from Scotty over $Dimension lanes: $worst%.3e")
-    assert(worst < 1e-6, f"Q1.$FractionBits drifted by $worst%.3e")
+    assert(worst < 1e-6, f"Q2.$FractionBits drifted by $worst%.3e")
   }
 
   it should "route the permutation, not merely scale" in {

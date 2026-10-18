@@ -121,7 +121,7 @@ class DenseKernelSpec extends AnyFlatSpec with ChiselSim {
     }
 
     info(f"worst deviation from Scotty over $Dimension rows: $worst%.3e")
-    assert(worst < 1e-6, f"Q1.$FractionBits drifted by $worst%.3e across a width-$Width row")
+    assert(worst < 1e-6, f"Q2.$FractionBits drifted by $worst%.3e across a width-$Width row")
   }
 
 }

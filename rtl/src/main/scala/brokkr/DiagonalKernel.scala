@@ -15,12 +15,11 @@ import chisel3.util._
   * `2^k`-wide multiply-accumulate array that is the whole argument for keeping the forms apart.
   *
   * ==Precision==
-  * Amplitudes are fixed point, Q1.`fractionBits`: a value is its integer divided by
-  * `2^(dataWidth-1)`, so the representable range is `[-1, 1)`. That suits amplitudes, which never
-  * leave the unit disc, and it is the first real departure from Scotty, whose amplitudes are
-  * double precision. The departure is deliberate and measured rather than assumed: `DiagonalKernelSpec`
-  * checks the RTL against an exact integer model of this arithmetic, and separately checks how far
-  * that model drifts from Scotty's doubles.
+  * Amplitudes and coefficients are fixed point in the shared [[Fixed]] format, Q2.`fractionBits`.
+  * This is the first real departure from Scotty, whose amplitudes are double precision, and the
+  * departure is measured rather than assumed: `DiagonalKernelSpec` checks the RTL against an exact
+  * integer model of this arithmetic, which admits no tolerance, and separately checks how far that
+  * model drifts from Scotty's doubles.
   *
   * The product of two Q2.f numbers is Q4.2f, so it is shifted right by `fractionBits` and truncated
   * — truncated, not rounded, because that is one gate cheaper and the error is already bounded well
@@ -39,18 +38,8 @@ class DiagonalKernel(val qubitCount: Int, val maxWidth: Int, val dataWidth: Int)
   val countWidth: Int = log2Ceil(maxWidth + 1)
   val tableDepth: Int = 1 << maxWidth
 
-  /** Q1.`fractionBits`: a stored integer `x` means `x / 2^fractionBits`. */
-  /** Q2.`fractionBits`: a stored integer `x` means `x / 2^fractionBits`, so the range is
-    * `[-2, 2)`.
-    *
-    * Two integer bits rather than one, which costs a bit of precision and buys correctness. A
-    * unitary operator has entries of exactly ±1 all over it — every `X`, `CNOT`, `SWAP` and Toffoli
-    * is a permutation matrix of them — and `1.0` is not representable in Q1.f, where the range stops
-    * at `1 - 2^-f`. It wraps to `-1.0`, silently flipping the sign of the most common coefficient
-    * there is. Amplitudes never need the extra range, but sharing one format keeps a single shift
-    * in the datapath.
-    */
-  val fractionBits: Int = dataWidth - 2
+  /** Q2.`fractionBits`; see [[Fixed]] for why two integer bits. */
+  val fractionBits: Int = Fixed.fractionBits(dataWidth)
 
   val io = IO(new Bundle {
     /** The block's support, ascending. Entries at or past `blockWidth` are ignored. */
@@ -99,7 +88,7 @@ class DiagonalKernel(val qubitCount: Int, val maxWidth: Int, val dataWidth: Int)
   val productRe = selectedRe * io.inRe - selectedIm * io.inIm
   val productIm = selectedRe * io.inIm + selectedIm * io.inRe
 
-  /** Q2.2f back down to Q1.f, truncating. */
+  /** Q4.2f back down to Q2.f, truncating. */
   private def narrow(wide: SInt): SInt = (wide >> fractionBits)(dataWidth - 1, 0).asSInt
 
   io.outRe := RegNext(narrow(productRe), 0.S)

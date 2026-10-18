@@ -8,7 +8,7 @@ import scala.io.Source
 /** Checks `DiagonalKernel` twice over, because it is the first block that is not bit-exact.
   *
   * `AddressGen` computes an integer, so it either matches Scotty or it does not. This one multiplies
-  * amplitudes, and the moment Scotty's doubles become Q1.23 fixed point the two stop agreeing
+  * amplitudes, and the moment Scotty's doubles become Q2.22 fixed point the two stop agreeing
   * exactly. Conflating the two questions would hide both, so they are asked separately:
   *
   *   1. does the RTL implement the fixed-point arithmetic exactly? Checked against an integer model
@@ -138,7 +138,7 @@ class DiagonalKernelSpec extends AnyFlatSpec with ChiselSim {
 
     // One quantisation step is 2^-23, about 1.2e-7, and a complex multiply costs a few of them.
     info(f"worst deviation from Scotty over ${samples.length} amplitudes: $worst%.3e")
-    assert(worst < 1e-6, f"Q1.$FractionBits drifted by $worst%.3e, more than the format should cost")
+    assert(worst < 1e-6, f"Q2.$FractionBits drifted by $worst%.3e, more than the format should cost")
   }
 
   it should "hold its output until the next valid amplitude" in {
