@@ -448,3 +448,62 @@ the resolution is to spend it rather than optimise.
 
 A single global issue port rather than a per-bank request network; no contention between operator
 loads and amplitude traffic; no refill or writeback path. Stage 3 integration questions.
+
+## Addendum 8: the request network, operator contention, and writeback
+
+The three gaps left by addendum 7. Two needed arithmetic rather than simulation.
+
+### The request network buys almost nothing
+
+```
+mapping         global port   no blocking   1 port/bank   ceiling
+low bits                2.1           2.1           2.0        32
+xor fold               10.3           9.9           7.4        32
+distinct               11.3          10.9           9.4        32
+ext. Hamming           20.1          19.6          17.0        32
+```
+
+Removing head-of-line blocking entirely lands within a few percent of the single global port, in
+both directions. (Neither strictly bounds the other: they also differ in how the issue window
+advances within a cycle. The closeness is the point, not the sign.)
+
+**Blocking was never what cost bandwidth.** A mapping that sends a whole slice to one bank is
+*starved*, not blocked — there is nothing for the other banks to accept. No interconnect fixes a
+bank nobody is asking for. Adding the single request port per bank a real network would have costs
+about 15%, which is more than the blocking it replaces.
+
+This was worth measuring mainly to find out the interconnect is not where the difficulty lives.
+
+### Operator traffic is not in contention
+
+A block loads its operator once and then streams the whole state past it, so the only question is
+amortisation:
+
+```
+   n   k    operator   amplitudes  operator share
+  20   4         256      1048576           0.02%
+  20   6        4096      1048576           0.39%
+  24   6        4096     16777216           0.02%
+  24   8       65536     16777216           0.39%
+  12   6        4096         4096          50.00%
+```
+
+Under a percent at any size worth building for. It stops being negligible only when the state is
+small enough to be comparable to the operator, which is the regime where the engine has nothing to
+do.
+
+### Writeback halves everything, and need not
+
+Every amplitude read is transformed and written back to the same address, hence the same bank. So
+traffic doubles while the distribution stays *identical* — the bank histogram does not change at
+all, and every bandwidth figure halves.
+
+But the write targets the address the read just used, so a memory supporting read-modify-write
+recovers the entire factor of two. That is a memory feature rather than an arbiter one, and it is
+the largest single lever left in the memory path.
+
+### Now genuinely not modelled
+
+Refill from a level below when the state does not fit on chip, and the CPU-side cost of computing
+fusion, Benes routing and bank descriptors per block. Both are questions about a system rather than
+about this datapath.

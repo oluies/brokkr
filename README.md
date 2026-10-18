@@ -147,6 +147,30 @@ extended Hamming 17.4→31.4).
 **In order, with modest queues, the bank mapping is worth 16× in bandwidth.** That is the number to
 design against.
 
+### Integration
+
+```bash
+./mill model.runMain brokkr.model.Integration
+```
+
+Three remaining questions, two of which need arithmetic rather than simulation.
+
+**The request network buys almost nothing.** Removing head-of-line blocking entirely lands within a
+few percent of a single global issue port, in both directions; adding the one request port per bank
+a real network would have costs about 15%. That closeness is the result — a mapping sending a whole
+slice to one bank is *starved, not blocked*, and no interconnect fixes a bank nobody asks for.
+
+**Operator traffic is not in contention.** A block loads its operator once and streams the whole
+state past it. A dense `4^k` operator against `2^n` amplitudes is 0.39% of traffic at n=20, k=6 and
+0.02% at n=24, k=6. It only matters when the state is small enough to be comparable to the operator
+(50% at n=12), which is the regime with nothing to accelerate.
+
+**Writeback halves everything, and need not.** Each amplitude is written back to the same address,
+hence the same bank, so traffic doubles with an identical distribution and every figure halves. But
+the write targets the address the read just used, so a read-modify-write memory recovers the whole
+factor of two — a memory feature, not an arbiter one, and the largest lever left in the memory
+path.
+
 ### The crossbar
 
 ```bash
