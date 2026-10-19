@@ -719,7 +719,8 @@ sbt 'Test/runMain scotty.simulator.fusion.FusionBench grover 10 4'
 - [scotty](https://github.com/oluies/scotty/tree/pctc) — the simulator, and the golden model any
   hardware here would be verified against.
 - [pctc](https://github.com/oluies/pctc) — noisy post-selected closed timelike curves; the workload
-  that raised the question.
+  that raised the question. It [runs in the browser](https://oluies.github.io/pctc/), compiled to
+  JavaScript with Scala.js, and its `erasure` channel is why the engine here carries two dimensions.
 - [OpenXiangShan/CUTE](https://github.com/OpenXiangShan/CUTE) — the thing this is modelled on.
 
 ---
