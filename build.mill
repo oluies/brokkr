@@ -83,3 +83,33 @@ object model extends ScalaModule {
 
   def sources = Task.Sources(moduleDir / "src" / "main" / "scala")
 }
+
+/** The same datapath in a different HDL, as a control on the per-MAC area claim.
+  *
+  * The assessment's cleanest number is that four structurally different datapaths all land within
+  * 6% of each other at about 20 000 cells per complex multiply-accumulate. That claim is about
+  * arithmetic dominating architecture, but every one of the four came out of the same generator, so
+  * it could instead be a fact about Chisel and firtool. SpinalHDL is an independent Scala HDL with
+  * its own backend — no FIRRTL, no CIRCT — so the same kernel written in it and synthesised through
+  * the same Yosys script is a fifth data point that tests exactly that.
+  *
+  * Scala 2.13 because SpinalHDL is published for it, same as Chisel.
+  */
+object spinal extends ScalaModule {
+  def scalaVersion = "2.13.15"
+
+  def spinalVersion = "1.15.0"
+
+  def scalacOptions = Seq("-deprecation", "-feature", "-unchecked")
+
+  def mvnDeps = Seq(
+    mvn"com.github.spinalhdl::spinalhdl-core:$spinalVersion",
+    mvn"com.github.spinalhdl::spinalhdl-lib:$spinalVersion"
+  )
+
+  // SpinalHDL's naming comes from a compiler plugin that rewrites `val` declarations; without it
+  // every signal in the generated Verilog is anonymous.
+  def scalacPluginMvnDeps = Seq(mvn"com.github.spinalhdl::spinalhdl-idsl-plugin:$spinalVersion")
+
+  def sources = Task.Sources(moduleDir / "src" / "main" / "scala")
+}

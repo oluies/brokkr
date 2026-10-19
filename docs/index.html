@@ -607,8 +607,68 @@ that makes a deep GEMM safe in fixed point, and it is what lets the same design 
     <tr><td>MonomialKernel</td><td>159 287</td><td>8</td><td>19 910</td></tr>
     <tr><td>DenseKernel</td><td>169 577</td><td>8</td><td>21 197</td></tr>
     <tr class="hi"><td>ComplexGemm</td><td>322 347</td><td>16</td><td><strong>20 146</strong></td></tr>
+    <tr><td>ComplexGemm, SpinalHDL</td><td>324 390</td><td>16</td><td>20 274</td></tr>
   </tbody>
 </table>
+</div>
+
+<h3>The fifth row is a control, not another datapath</h3>
+
+<p>All four of those came out of one generator, so &ldquo;architecture is noise against the
+multipliers&rdquo; could instead have been a fact about Chisel and firtool. <strong>SpinalHDL</strong>
+is an independent Scala HDL with its own Verilog backend &mdash; no FIRRTL, no CIRCT &mdash; so the
+same kernel is written again in it and synthesised by the same <code>scripts/area.sh</code>. That
+tests the claim rather than restating it.</p>
+
+<div class="tablewrap">
+<table class="narrow">
+  <caption>The same kernel from two independent generators.</caption>
+  <thead><tr><th>&nbsp;</th><th>Chisel</th><th>SpinalHDL</th></tr></thead>
+  <tbody>
+    <tr><td>cells</td><td>322 347</td><td>324 390</td></tr>
+    <tr><td>flip-flops</td><td>1 472</td><td>1 472</td></tr>
+    <tr><td>ports / port bits</td><td>52 / 1 156</td><td>52 / 1 156</td></tr>
+    <tr class="hi"><td>cells per complex MAC</td><td><strong>20 146</strong></td><td><strong>20 274</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>0.63% apart, with identical state and an identical interface.</strong> The whole
+difference is combinational: the two backends build the multiply and add trees slightly differently
+before <code>abc</code> sees them, trading 1 222 NANDs for 1 150 ANDs and 938 XNORs. Nothing about
+the architecture moved.</p>
+
+<p>Both backends also found the same optimisation independently, having been told nothing about it:
+the top 13 bits of each 59-bit accumulator cannot affect a truncated 24-bit output, so each
+accumulator is 46 flops rather than 59 &mdash; 32 &times; 46 = 1 472, in both.</p>
+
+<p>Comparing two areas only means something if the two circuits compute the same function, so that
+is checked rather than assumed. <code>scripts/equivalence.sh</code> puts both netlists in one
+Verilator simulation, drives them from identical <em>full-range</em> random stimulus &mdash; not the
+golden vectors, whose small amplitudes never reach the interesting cases &mdash; and compares every
+cell on every cycle. 50 688 values over 48 trials of depth 32: <strong>bit for bit identical</strong>.
+The place I expected them to diverge was rounding, SpinalHDL's
+<span class="mono">SFix(1 exp, -22 exp).truncated</span> against Chisel's hand-written
+<span class="mono">(acc &gt;&gt; fractionBits)(dataWidth-1,0).asSInt</span>. They agree exactly,
+including on negatives and on wraparound of the complex subtract.</p>
+
+<p>The ergonomic difference is real even though the area difference is not. In the Chisel version the
+accumulator width is <em>asserted</em>, as
+<span class="mono">2 &middot; dataWidth + log2Ceil(maxDepth) + 1</span>, and
+<code>Fixed.scala</code> is three integer functions with the discipline left to each kernel. In the
+SpinalHDL version the format is in the type, the width <em>falls out</em> of the arithmetic as a peak
+exponent, and the compiler refuses any assignment that would move the binary point. Both give 59
+bits. The Q1.23 bug in section 10 &mdash; a coefficient of exactly 1 wrapping to &minus;1 &mdash; is
+that class of error, and it would have been a compile error here.</p>
+
+<div class="verdict">
+  <span class="label cool">What the control says</span>
+  <p>The per-MAC number is about multipliers, not about Chisel. An independently written kernel from
+  an independent backend lands <strong>inside the existing band</strong>, 0.63% from its twin.</p>
+  <p>Which does not argue for a port. CUTE is Chisel, on rocket-chip and Utility, and the whole
+  premise here is similarity to it &mdash; giving that up for 0.63% would be a bad trade. One kernel
+  at one tile size through one gate-level flow with no liberty file is a fifth data point, not a
+  study. But it is the data point that was missing.</p>
 </div>
 
 <h3>The engine</h3>

@@ -4,7 +4,6 @@
 .metals/
 *.fir
 *.json.gz
-*.sv
 build/
 out/
 target/

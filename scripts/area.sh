@@ -13,10 +13,16 @@
 set -euo pipefail
 
 module="${1:?usage: scripts/area.sh <Module>}"
-source_file="build/${module}/${module}.sv"
 
-if [[ ! -f "$source_file" ]]; then
-  echo "missing $source_file — run ./mill rtl.runMain brokkr.Generate $module" >&2
+# .sv from Chisel via firtool, .v from SpinalHDL's own backend. Yosys reads either, and having the
+# same script weigh both is the point of the SpinalHDL kernel existing.
+source_file=""
+for ext in sv v; do
+  [[ -f "build/${module}/${module}.${ext}" ]] && source_file="build/${module}/${module}.${ext}"
+done
+
+if [[ -z "$source_file" ]]; then
+  echo "missing build/${module}/${module}.{sv,v} — generate $module first" >&2
   exit 1
 fi
 
@@ -25,7 +31,14 @@ fi
 # smaller than it is. Reading only this module's own directory is the other half of that: submodule
 # names depend only on shape, so `mem_16x24.sv` from one configuration would otherwise be read in
 # place of another's. `hierarchy -top` then prunes whatever the named module does not reach.
-sources=$(ls "build/${module}"/*.sv | tr '\n' ' ')
+# `|| true` because one of the two globs will not match: a Chisel directory has no .v and a
+# SpinalHDL one has no .sv, and `set -e` would otherwise take the failed glob as the script failing.
+sources=$(ls "build/${module}"/*.sv "build/${module}"/*.v 2>/dev/null | tr '\n' ' ' || true)
+
+if [[ -z "$sources" ]]; then
+  echo "no Verilog in build/${module}" >&2
+  exit 1
+fi
 
 yosys -p "
   read_verilog -sv ${sources}

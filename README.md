@@ -580,12 +580,65 @@ single-multiply kernels, because the accumulator is widened and narrowed only on
 | `MonomialKernel` | 159 287 | 8 | 19 910 |
 | `DenseKernel` | 169 577 | 8 | 21 197 |
 | `ComplexGemm` | 322 347 | 16 | **20 146** |
+| `ComplexGemm`, SpinalHDL | 324 390 | 16 | 20 274 |
 | `ChannelEngine`, dim 4 | 342 351 | 16 | — (+6% control) |
 
 **All four land within 6% of each other at about 20 000 cells per complex MAC.** Every
 architectural difference — phase tables, Benes networks, wide accumulators — is noise against the
 multipliers. So silicon per MAC is the same whichever engine you build; what differs is how much
 useful work a MAC does. Same cost, 43× the work.
+
+### The fifth row is a control, not another datapath
+
+All four of those came out of one generator, so the result could have been a fact about Chisel and
+firtool rather than about arithmetic. **SpinalHDL** is an independent Scala HDL with its own Verilog
+backend — no FIRRTL, no CIRCT — so `brokkr.spinal.ComplexGemm` is the same kernel written again in
+it, synthesised by the same `scripts/area.sh`, and it tests exactly that.
+
+| | Chisel | SpinalHDL |
+|---|---|---|
+| cells | 322 347 | 324 390 |
+| flip-flops | 1 472 | 1 472 |
+| ports / port bits | 52 / 1 156 | 52 / 1 156 |
+| cells per complex MAC | 20 146 | 20 274 |
+
+**0.63% apart, and the state is identical.** The whole difference is combinational — the two
+backends build the multiply and add trees slightly differently before `abc` sees them, trading 1 222
+NANDs for 1 150 ANDs and 938 XNORs. Nothing about the architecture moved, which is the claim.
+
+Both backends also independently discovered the same optimisation, having been told nothing: the top
+13 bits of each 59-bit accumulator cannot affect a truncated 24-bit output, so each is 46 flops, not
+59. **32 × 46 = 1 472 in both.**
+
+Comparing areas only means something if the two compute the same function, so that is checked
+directly rather than assumed. `scripts/equivalence.sh` puts both netlists in one Verilator
+simulation, drives them from identical **full-range** random stimulus — not the golden vectors, whose
+small amplitudes never reach the interesting cases — and compares every cell every cycle:
+
+```
+compared 50688 values over 48 trials of depth 32
+PASS GemmEquivalence: Chisel and SpinalHDL agree bit for bit
+```
+
+That is a stronger result than it looks. The place I expected them to diverge was rounding:
+SpinalHDL's `SFix(1 exp, -22 exp).truncated` against Chisel's hand-written
+`(acc >> fractionBits)(dataWidth-1,0).asSInt`. They agree exactly, including on negatives and on
+wraparound of the complex subtract.
+
+The ergonomic difference is real even though the area difference is not. In the Chisel version the
+accumulator width is asserted — `2 * dataWidth + log2Ceil(maxDepth) + 1` — and `Fixed.scala` is
+three integer functions with the discipline left to each kernel. In the SpinalHDL version the format
+is in the type, the width *falls out* of the arithmetic as a peak exponent of
+`2 * (dataWidth - fractionBits) + log2Up(maxDepth)`, and the compiler refuses any assignment that
+would move the binary point: `.truncated` has to be written. Both give 59 bits. **The Q1.23 bug —
+a coefficient of exactly 1 wrapping to −1 — is that class of error, and it would have been a compile
+error here.**
+
+None of which argues for a port. CUTE is Chisel, on rocket-chip and Utility, and the whole premise is
+similarity to it; answering in another HDL gives that up for 0.63%. One kernel at one tile size
+through one gate-level flow with no liberty file is a fifth data point, not a study — but it is the
+data point that was missing, and it says the per-MAC number is about multipliers rather than about
+Chisel.
 
 ## The finding so far
 

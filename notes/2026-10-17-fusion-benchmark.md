@@ -1466,3 +1466,83 @@ asymmetry over the same 24 cases. Three storage changes in a row have now left t
 bit-identical, which is what makes the fourth one worth trusting.
 
 Nothing in this engine is in a register file any more.
+
+
+## Addendum 26: the same kernel in SpinalHDL, as a control
+
+The cleanest number in this assessment is that four structurally different datapaths all land within
+6% of each other at about 20000 cells per complex multiply-accumulate — phase tables, Benes networks
+and wide accumulators all being noise against the multipliers. All four came out of one generator.
+So the result could instead have been a fact about Chisel and firtool, and nothing measured so far
+could tell the difference.
+
+SpinalHDL is an independent Scala HDL with its own Verilog backend — no FIRRTL, no CIRCT. Writing
+`ComplexGemm` again in it and synthesising through the same `scripts/area.sh` is the control that was
+missing.
+
+```
+                      Chisel     SpinalHDL
+cells                 322347        324390
+flip-flops              1472          1472
+ports / port bits    52 / 1156    52 / 1156
+cells per MAC          20146         20274
+```
+
+**0.63% apart, with identical state and an identical interface.** The whole difference is
+combinational: the two backends build the multiply and add trees slightly differently before `abc`
+sees them. The cell mix moves while the total barely does — 1222 fewer NANDs, 1150 more ANDs, 938
+more XNORs, 723 more ORNOTs — which is what "the same arithmetic expressed differently" looks like
+after technology mapping.
+
+Both backends also found the same optimisation independently, having been told nothing about it. The
+accumulator is 59 bits; the output takes the Q2.22 window, bits 45 down to 22; the top 13 bits
+therefore cannot affect anything, since truncation wraps rather than saturates. Each accumulator
+comes out 46 flops rather than 59, and 32 * 46 = 1472 in both.
+
+### The function, checked rather than assumed
+
+Comparing two areas is meaningless if the two circuits compute different things, and this is a case
+where that was a live risk rather than a formality.
+
+`scripts/equivalence.sh` puts both netlists in one Verilator simulation, drives them from identical
+full-range random stimulus and compares every cell on every cycle. Full-range rather than the golden
+vectors, deliberately: the vectors are small amplitudes and the disagreements worth finding —
+truncation of negatives, wraparound of the complex subtract — live at the extremes. 48 trials of
+depth 32, with `inValid` dropped every fourth cycle so a spurious accumulate would show:
+
+```
+compared 50688 values over 48 trials of depth 32; 24576 were non-zero
+PASS GemmEquivalence: Chisel and SpinalHDL agree bit for bit
+```
+
+The place I expected divergence was rounding: `SFix(1 exp, -22 exp).truncated` against the
+hand-written `(acc >> fractionBits)(dataWidth - 1, 0).asSInt`. They agree exactly. That was worth
+checking and would have been worth reporting either way.
+
+One incidental convenience: both generators name scalarised vector ports the same way, `io_aRe_0`
+and so on, so the testbench connects all sixteen shared inputs with SystemVerilog's `.*` and only
+the outputs have to be separated by hand.
+
+### What it says, and what it does not
+
+The per-MAC number is about multipliers, not about Chisel. An independently written kernel from an
+independent backend lands inside the existing band rather than widening it — 20274 sits between
+ComplexGemm's 20146 and DiagonalKernel's 20775.
+
+It does not argue for a port. CUTE is Chisel, on rocket-chip and Utility, and the whole premise of
+this assessment is similarity to it; giving that up for 0.63% would be a bad trade. One kernel at one
+tile size through one gate-level flow with no liberty file is a fifth data point, not a study.
+
+The ergonomic difference is real even though the area difference is not, and it is worth recording
+separately from the measurement. In the Chisel version the accumulator width is asserted as
+`2 * dataWidth + log2Ceil(maxDepth) + 1`, and `Fixed.scala` is three integer functions with the
+discipline left to each kernel to apply by hand. In the SpinalHDL version the format is in the type,
+the width falls out of the arithmetic as a peak exponent of
+`2 * (dataWidth - fractionBits) + log2Up(maxDepth)`, and the compiler refuses any assignment that
+would move the binary point — `.truncated` has to be written explicitly. Both arrive at 59 bits.
+
+Addendum 4's bug, Q1.23 being unable to hold a coefficient of exactly 1, is precisely that class of
+error. It cost a sign flip on the permute path, an exact-model check to catch it, a format change
+across three kernels and a regression spec to keep it fixed. Here it would have been a compile error.
+That is not an argument for switching HDL this late, but it is the honest reckoning of what the
+hand-rolled format cost.
