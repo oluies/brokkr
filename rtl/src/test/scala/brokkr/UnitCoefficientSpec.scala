@@ -1,6 +1,7 @@
 package brokkr
 
 import chisel3._
+import chisel3.util.log2Ceil
 import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 
@@ -53,6 +54,44 @@ class UnitCoefficientSpec extends AnyFlatSpec with ChiselSim {
       q1One > largestSigned,
       s"Q1.$q1FractionBits would hold 1.0 after all, so this regression no longer guards anything"
     )
+  }
+
+  it should "make the bug unwriteable, not merely detected" in {
+    // The three assertions above check that the format in use is the right one. This checks that
+    // the type would refuse the wrong one, which is the stronger property and the whole reason
+    // QFormat exists: Q1.23 cannot hold 1.0, and saying so is an elaboration error rather than a
+    // sign flip discovered in simulation.
+    val wrong = QFormat(integerBits = 1, fractionBits = DataWidth - 1)
+    val right = Fixed.working(DataWidth)
+
+    assert(!wrong.representable(BigDecimal(1)), s"$wrong should not hold 1.0")
+    assert(wrong.representable(BigDecimal(-1)), s"$wrong does hold -1.0, which is why it looked fine")
+    assert(right.representable(BigDecimal(1)) && right.representable(BigDecimal(-1)))
+
+    assertThrows[IllegalArgumentException](wrong.requireRepresentable(BigDecimal(1)))
+    assert(right.requireRepresentable(BigDecimal(1)) == one)
+    assert(right.requireRepresentable(BigDecimal(-1)) == -one)
+
+    info(s"$wrong holds [${wrong.min}, ${wrong.max}]; $right holds [${right.min}, ${right.max}]")
+  }
+
+  "the derived widths" should "be the ones the kernels used to assert by hand" in {
+    // ComplexGemm's accumulator was `2 * dataWidth + log2Ceil(maxDepth) + 1`, a number that had to
+    // be checked against the arithmetic by eye. These pin the derivation that replaced it.
+    val working = Fixed.working(DataWidth)
+    val product = working * working
+    val term = product - product
+
+    assert(working == QFormat(2, 22) && working.width == DataWidth)
+    assert(product == QFormat(4, 44) && product.width == 2 * DataWidth)
+    assert(term == QFormat(5, 44))
+
+    val maxDepth = 1024
+    val accumulator = term.accumulating(maxDepth)
+
+    assert(accumulator == QFormat(15, 44))
+    assert(accumulator.width == 2 * DataWidth + log2Ceil(maxDepth) + 1, "59, now derived")
+    info(s"$working × $working → $product, subtract → $term, ×$maxDepth → $accumulator (${accumulator.width} bits)")
   }
 
   "DiagonalKernel" should "leave an amplitude alone when its phase is exactly 1" in {

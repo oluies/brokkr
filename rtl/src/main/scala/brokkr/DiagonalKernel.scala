@@ -41,6 +41,9 @@ class DiagonalKernel(val qubitCount: Int, val maxWidth: Int, val dataWidth: Int)
   /** Q2.`fractionBits`; see [[Fixed]] for why two integer bits. */
   val fractionBits: Int = Fixed.fractionBits(dataWidth)
 
+  /** The same format as a type, so the narrowing below cannot be written wrongly. */
+  val working: QFormat = Fixed.working(dataWidth)
+
   val io = IO(new Bundle {
     /** The block's support, ascending. Entries at or past `blockWidth` are ignored. */
     val qubits = Input(Vec(maxWidth, UInt(indexWidth.W)))
@@ -84,14 +87,18 @@ class DiagonalKernel(val qubitCount: Int, val maxWidth: Int, val dataWidth: Int)
   val selectedRe = phaseRe(phase)
   val selectedIm = phaseIm(phase)
 
-  // (a + bi)(c + di) = (ac - bd) + (ad + bc)i
-  val productRe = selectedRe * io.inRe - selectedIm * io.inIm
-  val productIm = selectedRe * io.inIm + selectedIm * io.inRe
+  // (a + bi)(c + di) = (ac - bd) + (ad + bc)i. The formats come from [[QFormat]] rather than from a
+  // shift written by hand: the product is Q4.2f, the subtract carries to Q5.2f, and `to` is the one
+  // place the point moves.
+  private val coefficientRe = working(selectedRe)
+  private val coefficientIm = working(selectedIm)
+  private val amplitudeRe = working(io.inRe)
+  private val amplitudeIm = working(io.inIm)
 
-  /** Q4.2f back down to Q2.f, truncating. */
-  private def narrow(wide: SInt): SInt = (wide >> fractionBits)(dataWidth - 1, 0).asSInt
+  val productRe = coefficientRe * amplitudeRe - coefficientIm * amplitudeIm
+  val productIm = coefficientRe * amplitudeIm + coefficientIm * amplitudeRe
 
-  io.outRe := RegNext(narrow(productRe), 0.S)
-  io.outIm := RegNext(narrow(productIm), 0.S)
+  io.outRe := RegNext(productRe.to(working).bits, 0.S)
+  io.outIm := RegNext(productIm.to(working).bits, 0.S)
   io.outValid := RegNext(io.inValid, false.B)
 }

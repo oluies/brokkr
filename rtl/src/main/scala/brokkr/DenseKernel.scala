@@ -30,6 +30,17 @@ class DenseKernel(val maxWidth: Int, val dataWidth: Int) extends Module {
   /** Q2.`fractionBits`; see [[Fixed]] for why two integer bits. */
   val fractionBits: Int = Fixed.fractionBits(dataWidth)
 
+  /** The entry format, and the formats the arithmetic over it produces. */
+  val working: QFormat = Fixed.working(dataWidth)
+
+  /** One column's contribution: `a·c - b·d`, a product plus the subtract's carry. */
+  val term: QFormat = working * working - working * working
+
+  /** The row sum. `dimension` terms need `log2(dimension)` more integer bits than one of them — a
+    * width the type computes instead of the reduce tree growing by a bit per addition.
+    */
+  val total: QFormat = term.accumulating(dimension)
+
   val io = IO(new Bundle {
     /** Operator load port, addressed row-major as `row * 2^k + col`. */
     val writeEnable = Input(Bool())
@@ -62,19 +73,24 @@ class DenseKernel(val maxWidth: Int, val dataWidth: Int) extends Module {
     val entryRe = operatorRe(address)
     val entryIm = operatorIm(address)
 
+    val coefficientRe = working(entryRe)
+    val coefficientIm = working(entryIm)
+    val amplitudeRe = working(io.inRe(col))
+    val amplitudeIm = working(io.inIm(col))
+
     (
-      entryRe * io.inRe(col) - entryIm * io.inIm(col),
-      entryRe * io.inIm(col) + entryIm * io.inRe(col)
+      (coefficientRe * amplitudeRe - coefficientIm * amplitudeIm).widen(total),
+      (coefficientRe * amplitudeIm + coefficientIm * amplitudeRe).widen(total)
     )
   }
 
-  // Widened accumulation, so the only rounding in the row is the final shift.
-  val sumRe = terms.map(_._1).reduce(_ +& _)
-  val sumIm = terms.map(_._2).reduce(_ +& _)
+  // Widened accumulation, so the only rounding in the row is the final narrowing. Every addition
+  // happens at `total`, which already has room for all `dimension` of them, rather than the tree
+  // growing a bit per level as `reduce(_ +& _)` did.
+  val sumRe = terms.map(_._1).reduce((a, b) => a.accumulate(b, total))
+  val sumIm = terms.map(_._2).reduce((a, b) => a.accumulate(b, total))
 
-  private def narrow(wide: SInt): SInt = (wide >> fractionBits)(dataWidth - 1, 0).asSInt
-
-  io.outRe := RegNext(narrow(sumRe), 0.S)
-  io.outIm := RegNext(narrow(sumIm), 0.S)
+  io.outRe := RegNext(sumRe.to(working).bits, 0.S)
+  io.outIm := RegNext(sumIm.to(working).bits, 0.S)
   io.outValid := RegNext(io.inValid, false.B)
 }

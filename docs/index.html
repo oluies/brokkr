@@ -2016,6 +2016,71 @@ error.</p>
   for itself the next time a kernel truncates in the wrong place.</p>
 </div>
 
+<h3>Taking the one thing worth taking</h3>
+
+<p>The evaluation above ended on a specific recommendation: not SpinalHDL, but a Q-format type with
+the point in it. That is now <code>QFormat</code> and <code>Q</code> in
+<code>rtl/src/main/scala/brokkr/Fixed.scala</code>, and all four datapaths are written in terms of
+it. Three properties, each matching a way the hand-written version could go wrong:</p>
+
+<ul>
+  <li><strong>A format knows what it can represent.</strong>
+    <span class="mono">QFormat(1, 23).requireRepresentable(1.0)</span> is an elaboration error. The
+    reason Q1.23 looked fine is now visible in the test output: it holds
+    <span class="mono">[-1, 0.99999988]</span> &mdash; &minus;1 exactly, +1 not at all.</li>
+  <li><strong>Products and sums compute their own format.</strong> The 59-bit accumulator was
+    asserted as <span class="mono">2 &middot; dataWidth + log2Ceil(maxDepth) + 1</span>; it is now
+    <span class="mono">(working * working - working * working).accumulating(maxDepth)</span>, and a
+    test prints the chain: Q2.22 &times; Q2.22 &rarr; Q4.44, subtract &rarr; Q5.44, &times;1024
+    &rarr; Q15.44, 59 bits.</li>
+  <li><strong>Narrowing is explicit.</strong> <span class="mono">to</span> is the only way to move
+    the point, so a dropped or doubled shift is a type error rather than a wrong answer.</li>
+</ul>
+
+<div class="tablewrap">
+<table>
+  <caption>What the rewrite cost, measured the same way as everything else here.</caption>
+  <thead><tr><th>kernel</th><th>by hand</th><th>with the type</th><th>delta</th></tr></thead>
+  <tbody>
+    <tr><td>DiagonalKernel</td><td>20 775</td><td>20 775</td><td class="note">0</td></tr>
+    <tr><td>MonomialKernel</td><td>159 287</td><td>159 287</td><td class="note">0</td></tr>
+    <tr><td>DenseKernel</td><td>169 577</td><td>169 579</td><td class="note">+2</td></tr>
+    <tr class="hi"><td>ComplexGemm</td><td>322 347</td><td>322 347</td><td class="note">0</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Two cells on 672 586.</strong> <code>ComplexGemm</code> is still bit-for-bit identical to
+the SpinalHDL netlist over the same 50 688 full-range random values, the generated
+<code>DenseKernel</code> still matches Scotty's vectors bit for bit under Verilator, and the
+exact-integer-model specs pass at every depth with the deviations unchanged. The
+<code>DiagonalKernel</code> netlist differs from the old one only in signal <em>names</em>.</p>
+
+<p>The interesting part is the two cells, because they are not what I expected. The old
+<code>DenseKernel</code> summed eight 48-bit terms with <span class="mono">reduce(_ +&amp; _)</span>,
+which grows a bit per addition &mdash; 55 bits by the end &mdash; where
+<span class="mono">accumulating(dimension)</span> computes 52. I expected the type to save area by
+not over-allocating. It saved nothing, because <strong>firtool had already narrowed both to 46
+bits</strong>: the output takes bits 45 down to 22, so everything above bit 45 was dead in the
+hand-written version too. The hand-written slack was already free. The +2 is the sum being
+re-associated, not re-sized &mdash; noise, and labelled as such.</p>
+
+<p>One thing the type did surface. The old <span class="mono">a*c - b*d</span> was computed at 48
+bits, Q4.44, where the subtract's result is Q5.44 and wants 49. It never overflowed, because
+Q4.44 reaches &plusmn;8 and <span class="mono">|ac - bd| &lt; 8</span> strictly &mdash; the bound is
+tight only because +2 is not representable in Q2.22. So it was correct by the thinnest available
+margin, and by accident rather than by argument. The typed version carries the bit.</p>
+
+<div class="verdict">
+  <span class="label cool">The honest result</span>
+  <p>A type that makes the Q1.23 bug <strong>unwriteable costs two cells across four datapaths</strong>
+  and changes no answer anywhere. That is the whole case for it; there is no area argument in either
+  direction.</p>
+  <p>And the null result on <code>DenseKernel</code> is worth keeping: the compiler had already
+  eliminated the consequence of allocating loosely. Width discipline in the source buys correctness
+  you can read, not silicon.</p>
+</div>
+
 <h3>Also evaluated, recorded here</h3>
 
 <p>The simulator was the other implementation question, decided earlier and for narrower reasons.

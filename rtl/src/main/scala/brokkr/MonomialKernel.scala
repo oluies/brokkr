@@ -28,6 +28,9 @@ class MonomialKernel(val maxWidth: Int, val dataWidth: Int) extends Module {
   val dimension: Int = 1 << maxWidth
   /** Q2.`fractionBits`; see [[Fixed]] for why two integer bits. */
   val fractionBits: Int = Fixed.fractionBits(dataWidth)
+
+  /** The same format as a type, so the narrowing below cannot be written wrongly. */
+  val working: QFormat = Fixed.working(dataWidth)
   val controlBits: Int = Benes.controlBits(dimension)
 
   val io = IO(new Bundle {
@@ -57,12 +60,17 @@ class MonomialKernel(val maxWidth: Int, val dataWidth: Int) extends Module {
     phaseIm(io.writeAddr) := io.writeIm
   }
 
-  private def narrow(wide: SInt): SInt = (wide >> fractionBits)(dataWidth - 1, 0).asSInt
+
 
   // One complex multiply per lane. No accumulation anywhere.
   val scaled = Seq.tabulate(dimension) { lane =>
-    val re = narrow(phaseRe(lane) * io.inRe(lane) - phaseIm(lane) * io.inIm(lane))
-    val im = narrow(phaseRe(lane) * io.inIm(lane) + phaseIm(lane) * io.inRe(lane))
+    val coefficientRe = working(phaseRe(lane))
+    val coefficientIm = working(phaseIm(lane))
+    val amplitudeRe = working(io.inRe(lane))
+    val amplitudeIm = working(io.inIm(lane))
+
+    val re = (coefficientRe * amplitudeRe - coefficientIm * amplitudeIm).to(working).bits
+    val im = (coefficientRe * amplitudeIm + coefficientIm * amplitudeRe).to(working).bits
 
     (re, im)
   }

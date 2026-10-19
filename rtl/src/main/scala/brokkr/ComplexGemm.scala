@@ -34,8 +34,22 @@ class ComplexGemm(val tile: Int, val dataWidth: Int, val maxDepth: Int) extends 
 
   val fractionBits: Int = Fixed.fractionBits(dataWidth)
 
-  /** Two full-width factors, plus headroom for `maxDepth` accumulations and the complex subtract. */
-  val accWidth: Int = 2 * dataWidth + log2Ceil(maxDepth) + 1
+  /** The entry format, Q2.`fractionBits`. See [[Fixed]] for why two integer bits. */
+  val working: QFormat = Fixed.working(dataWidth)
+
+  /** One term of the accumulation: `a·c - b·d`, so a product's format plus a subtract's carry. */
+  val term: QFormat = working * working - working * working
+
+  /** Two full-width factors, plus headroom for `maxDepth` accumulations and the complex subtract.
+    *
+    * This used to be asserted as `2 * dataWidth + log2Ceil(maxDepth) + 1`, a number that had to be
+    * checked against the arithmetic by hand. It is now derived from it: Q2.22 times Q2.22 is Q4.44,
+    * the subtract carries one bit to Q5.44, and `maxDepth` of those need `log2(maxDepth)` more.
+    * At `dataWidth` 24 and `maxDepth` 1024 that is Q15.44 — the same 59 bits, now a consequence.
+    */
+  val acc: QFormat = term.accumulating(maxDepth)
+
+  val accWidth: Int = acc.width
 
   val io = IO(new Bundle {
     /** Drop the accumulators, starting a new tile. */
@@ -53,25 +67,31 @@ class ComplexGemm(val tile: Int, val dataWidth: Int, val maxDepth: Int) extends 
     val outIm = Output(Vec(tile * tile, SInt(dataWidth.W)))
   })
 
-  val accRe = Reg(Vec(tile * tile, SInt(accWidth.W)))
-  val accIm = Reg(Vec(tile * tile, SInt(accWidth.W)))
+  val accRe = Reg(Vec(tile * tile, SInt(acc.width.W)))
+  val accIm = Reg(Vec(tile * tile, SInt(acc.width.W)))
 
   for (row <- 0 until tile; col <- 0 until tile) {
     val index = row * tile + col
 
+    val aRe = working(io.aRe(row))
+    val aIm = working(io.aIm(row))
+    val bRe = working(io.bRe(col))
+    val bIm = working(io.bIm(col))
+
     // (a + bi)(c + di) = (ac - bd) + (ad + bc)i, once per cell: tile^2 complex multipliers.
-    val productRe = io.aRe(row) * io.bRe(col) - io.aIm(row) * io.bIm(col)
-    val productIm = io.aRe(row) * io.bIm(col) + io.aIm(row) * io.bRe(col)
+    val productRe = aRe * bRe - aIm * bIm
+    val productIm = aRe * bIm + aIm * bRe
 
     when(io.clear) {
       accRe(index) := 0.S
       accIm(index) := 0.S
     }.elsewhen(io.inValid) {
-      accRe(index) := accRe(index) + productRe
-      accIm(index) := accIm(index) + productIm
+      accRe(index) := acc(accRe(index)).accumulate(productRe, acc).bits
+      accIm(index) := acc(accIm(index)).accumulate(productIm, acc).bits
     }
 
-    io.outRe(index) := (accRe(index) >> fractionBits)(dataWidth - 1, 0).asSInt
-    io.outIm(index) := (accIm(index) >> fractionBits)(dataWidth - 1, 0).asSInt
+    // The only format change in the kernel, and it has to be written to happen.
+    io.outRe(index) := acc(accRe(index)).to(working).bits
+    io.outIm(index) := acc(accIm(index)).to(working).bits
   }
 }

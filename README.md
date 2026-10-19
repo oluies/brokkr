@@ -659,6 +659,37 @@ data point that was missing, and it says the per-MAC number is about multipliers
 Chisel. Section 11 of the page keeps the full evaluation; the one thing worth taking from SpinalHDL
 is not SpinalHDL but **a Q-format type with the point in it**.
 
+### Which is now taken
+
+`QFormat` and `Q` are in `Fixed.scala`, and all four datapaths are written in terms of them.
+`QFormat(1, 23).requireRepresentable(1.0)` is an elaboration error — the test output shows why Q1.23
+looked fine, since it holds `[-1, 0.99999988]`, −1 exactly and +1 not at all. The 59-bit accumulator
+is derived rather than asserted: Q2.22 × Q2.22 → Q4.44, subtract → Q5.44, ×1024 → Q15.44. And `to`
+is the only way to move the point, so a dropped or doubled shift is a type error.
+
+| kernel | by hand | with the type | delta |
+|---|---|---|---|
+| `DiagonalKernel` | 20 775 | 20 775 | 0 |
+| `MonomialKernel` | 159 287 | 159 287 | 0 |
+| `DenseKernel` | 169 577 | 169 579 | +2 |
+| `ComplexGemm` | 322 347 | 322 347 | 0 |
+
+**Two cells on 672 586**, and no answer changed anywhere: `ComplexGemm` is still bit-identical to the
+SpinalHDL netlist over the same 50 688 random values, the generated `DenseKernel` still matches
+Scotty's vectors bit for bit under Verilator, and the exact-model specs pass at every depth with
+unchanged deviations.
+
+The +2 is not what I expected. `DenseKernel` summed eight 48-bit terms with `reduce(_ +& _)`, growing
+a bit per addition to 55, where `accumulating(dimension)` computes 52 — so the type should have saved
+area. It saved nothing, because **firtool had already narrowed both to 46 bits**: the output takes
+bits 45…22, so everything above was dead in the hand-written version too. The hand-written slack was
+already free, and the +2 is the sum re-associating, not re-sizing.
+
+The type did surface one thing. `a*c - b*d` was computed at 48 bits, Q4.44, where the subtract wants
+Q5.44 and 49. It never overflowed — Q4.44 reaches ±8 and `|ac - bd| < 8` strictly, the bound being
+tight only because +2 is not representable in Q2.22. Correct by the thinnest available margin, and by
+accident rather than by argument.
+
 ## The finding so far
 
 Gate fusion is what makes the kernel tensor-engine-shaped, and the measurements say something

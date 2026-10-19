@@ -1608,3 +1608,67 @@ So the choice is not between two languages. It is between tracking the format by
 type that refuses to let it drift — a difference in what the compiler rejects rather than in what the
 silicon costs. Stay on Chisel for the premise; the thing worth taking from SpinalHDL is not
 SpinalHDL but a Q-format type with the point in it, which is a few hundred lines on top of `SInt`.
+
+
+## Addendum 27: taking the one thing worth taking
+
+Addendum 26 ended on a specific recommendation: not SpinalHDL, but a Q-format type with the point in
+it, "a few hundred lines on top of `SInt`". That is now `QFormat` and `Q` in `Fixed.scala`, and all
+four datapaths are written in terms of them.
+
+Three properties, each matching a way the hand-written version could go wrong:
+
+- **a format knows what it can represent.** `QFormat(1, 23).requireRepresentable(1.0)` is an
+  elaboration error. The test prints the reason Q1.23 looked fine: it holds
+  `[-1, 0.99999988079071044921875]` — minus one exactly, plus one not at all;
+- **products and sums compute their own format.** The 59-bit accumulator was asserted as
+  `2 * dataWidth + log2Ceil(maxDepth) + 1`; it is now
+  `(working * working - working * working).accumulating(maxDepth)`, and a test pins the chain:
+  Q2.22 x Q2.22 -> Q4.44, subtract -> Q5.44, x1024 -> Q15.44, 59 bits;
+- **narrowing is explicit.** `to` is the only way to move the point, so a dropped or doubled shift
+  is a type error rather than a wrong answer.
+
+### What it cost
+
+```
+kernel            by hand   with the type   delta
+DiagonalKernel      20775           20775       0
+MonomialKernel     159287          159287       0
+DenseKernel        169577          169579      +2
+ComplexGemm        322347          322347       0
+```
+
+Two cells on 672586. No answer changed anywhere: `ComplexGemm` is still bit-for-bit identical to the
+SpinalHDL netlist over the same 50688 full-range random values, the generated `DenseKernel` still
+matches Scotty's vectors bit for bit under Verilator, and the exact-integer-model specs pass at every
+depth with the deviations unchanged at 2.1e-07 to 2.4e-07. The `DiagonalKernel` netlist differs from
+the old one only in signal names — `_productRe_T_2` became `_GEN_3`.
+
+### The two cells are not what I expected, and that is the finding
+
+`DenseKernel` summed eight 48-bit terms with `reduce(_ +& _)`, which grows a bit per addition and
+reaches 55 bits, where `accumulating(dimension)` computes 52. I expected the type to save area by
+declining to over-allocate.
+
+It saved nothing. firtool had already narrowed both to 46 bits, because the output takes bits 45 down
+to 22 and everything above bit 45 is dead — in the hand-written version too. The widest wire in the
+*old* netlist is `[45:0]`. So the hand-written slack was already free, and the +2 cells are the sum
+being re-associated by a different `reduce`, not re-sized.
+
+Which is worth stating plainly, because it is the same shape as addendum 26's result and the third
+time this project has landed on it: **width discipline in the source buys correctness you can read,
+not silicon.** The compiler had already eliminated the consequence of allocating loosely. There is no
+area argument for the type in either direction, and that is the whole honest case for it.
+
+### One thing it did surface
+
+The old `a*c - b*d` was computed at 48 bits, Q4.44, where the subtract's result is Q5.44 and wants
+49. Chisel's `-` on two 48-bit `SInt` gives 48, not 49.
+
+It never overflowed. Q4.44 reaches plus or minus 8, and `|ac - bd| < 8` strictly — the bound is tight
+only because +2 is not representable in Q2.22, so `ac` reaches 4 exactly while `bd` cannot reach -4.
+The accumulator above it was meanwhile sized for a 49-bit term, the `+ 1` in
+`2 * dataWidth + log2Ceil(maxDepth) + 1` being exactly that bit. So the hand-written version sized
+the accumulator for a term one bit wider than it computed, and was correct by the thinnest available
+margin, by accident rather than by argument. The typed version carries the bit, and the margin is now
+something the formats state rather than something a reader has to reconstruct.
