@@ -634,11 +634,30 @@ would move the binary point: `.truncated` has to be written. Both give 59 bits. 
 a coefficient of exactly 1 wrapping to −1 — is that class of error, and it would have been a compile
 error here.**
 
+One correction to the way the two are usually contrasted, since it came up: **both are Scala.**
+Neither is a separate language, in both elaboration *is* a Scala program, both ship a scalac plugin
+to recover signal names from `val` declarations, and **neither is published for Scala 3** — Maven
+Central has `chisel_2.12`/`chisel_2.13` and `spinalhdl-core` for 2.11/2.12/2.13. So `rtl` is pinned
+to 2.13 while `vectors` and `model` run Scala 3.9, either way.
+
+The difference is the back half of the pipeline. Chisel elaborates to FIRRTL and hands off to
+`firtool`, a 27 MB native LLVM/MLIR compiler it downloads and version-matches itself; SpinalHDL's
+backend is Scala and emits Verilog in the same JVM run. "SpinalHDL uses Scala directly, Chisel
+rewrites" is right about the toolchain and wrong about the source. The per-cell body of the two
+kernels is identical *character for character* apart from the assignments that touch the binary
+point.
+
+That extra stage has already cost something nameable here: `Generate.scala` passes
+`--lowering-options=disallowLocalVariables,disallowPackedArrays` solely because CIRCT emits
+`automatic logic` inside `always` blocks and Yosys rejects it. Nothing in the Chisel source asks for
+that. The SpinalHDL output needed no flag.
+
 None of which argues for a port. CUTE is Chisel, on rocket-chip and Utility, and the whole premise is
 similarity to it; answering in another HDL gives that up for 0.63%. One kernel at one tile size
 through one gate-level flow with no liberty file is a fifth data point, not a study — but it is the
 data point that was missing, and it says the per-MAC number is about multipliers rather than about
-Chisel.
+Chisel. Section 11 of the page keeps the full evaluation; the one thing worth taking from SpinalHDL
+is not SpinalHDL but **a Q-format type with the point in it**.
 
 ## The finding so far
 

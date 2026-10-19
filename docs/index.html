@@ -1919,6 +1919,113 @@ point rather than an incidental one.</p>
 </ul>
 
 <hr>
+<h2><span class="num">11</span>Implementation evaluations</h2>
+
+<p>Everything above argues about architecture. This section is for the other kind of question &mdash;
+which tools to build it with &mdash; kept separate because the answers have different lifetimes. An
+architectural result stays true; a toolchain evaluation expires.</p>
+
+<h3>SpinalHDL against Chisel</h3>
+
+<p>The measurement is in section 04b: the same kernel from both generators, <strong>0.63% apart with
+identical state and an identical interface</strong>, and bit-for-bit identical in function. This is
+what that implies for the choice, and a correction to the way the two are usually contrasted.</p>
+
+<p><strong>Both are Scala.</strong> Neither is a separate language with its own parser; in both you
+write ordinary Scala, elaboration <em>is</em> a Scala program, and both ship a scalac compiler plugin
+to recover signal names from <span class="mono">val</span> declarations &mdash;
+<span class="mono">chisel-plugin</span> and <span class="mono">spinalhdl-idsl-plugin</span>. And
+neither is published for Scala 3: Maven Central has <span class="mono">chisel_2.12</span> and
+<span class="mono">chisel_2.13</span>, and <span class="mono">spinalhdl-core</span> for 2.11, 2.12
+and 2.13. So this repository's <code>rtl</code> module is pinned to 2.13 while <code>vectors</code>
+and <code>model</code> run Scala 3.9, and that is true whichever HDL it uses.</p>
+
+<p>Where the two genuinely differ is the <em>back</em> half of the pipeline.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>The two toolchains, as this repository actually uses them.</caption>
+  <thead><tr><th>&nbsp;</th><th>Chisel 7.0.0-RC1</th><th>SpinalHDL 1.15.0</th></tr></thead>
+  <tbody>
+    <tr><td>source language</td><td>Scala 2.13</td><td>Scala 2.13</td></tr>
+    <tr><td>scalac plugin</td><td>required</td><td>required</td></tr>
+    <tr><td>Scala 3</td><td>not published</td><td>not published</td></tr>
+    <tr><td>intermediate form</td><td>FIRRTL</td><td class="note">none &mdash; its own netlist</td></tr>
+    <tr class="hi"><td>Verilog backend</td><td><strong>firtool</strong>, native LLVM/MLIR</td><td><strong>Scala</strong>, in-process</td></tr>
+    <tr><td>external binary</td><td>27 MB, version-matched, auto-fetched</td><td class="note">none</td></tr>
+    <tr><td>emits</td><td>SystemVerilog</td><td>Verilog and VHDL</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>So &ldquo;SpinalHDL uses Scala directly, Chisel rewrites&rdquo; is right about the toolchain and
+wrong about the source. Chisel elaborates Scala to FIRRTL and then hands off to <code>firtool</code>,
+a 27 MB LLVM-based compiler that Chisel downloads and version-matches on its own &mdash; this machine
+is carrying <span class="mono">llvm-firtool/1.114.1</span> and <span class="mono">1.62.1</span> in a
+cache, built on LLVM 21. SpinalHDL's backend is Scala and emits Verilog in the same JVM run, with no
+separate IR and nothing to fetch.</p>
+
+<p>That extra stage has already cost this project something concrete and nameable.
+<code>Generate.scala</code> passes
+<span class="mono">--lowering-options=disallowLocalVariables,disallowPackedArrays</span> for one
+reason: CIRCT emits <span class="mono">automatic logic</span> inside <span class="mono">always</span>
+blocks, and Yosys rejects it with &ldquo;Invalid nesting of always blocks&rdquo;. Nothing in the
+Chisel source asks for that; it is a property of a code generator two stages downstream, and it had
+to be diagnosed through the generated Verilog. The SpinalHDL output needed no such flag.</p>
+
+<p>What the stage buys is not nothing either. FIRRTL is a stable IR that other tools consume, firtool
+is a real optimising compiler, and &mdash; decisively for this assessment &mdash; CUTE is Chisel, on
+rocket-chip and Utility. The whole premise here is similarity to it.</p>
+
+<h3>How little the source differs</h3>
+
+<p>The per-cell body of the two kernels is worth seeing, because the parts that are identical are
+identical <em>character for character</em> &mdash; the loop, the index, the comment, and both complex
+products:</p>
+
+<pre><code>val productRe = io.aRe(row) * io.bRe(col) - io.aIm(row) * io.bIm(col)
+val productIm = io.aRe(row) * io.bIm(col) + io.aIm(row) * io.bRe(col)</code></pre>
+
+<p>Only the assignments diverge, and only where the binary point is involved:</p>
+
+<pre><code>// Chisel: the point is tracked by hand.
+accRe(index) := accRe(index) + productRe
+io.outRe(index) := (accRe(index) &gt;&gt; fractionBits)(dataWidth - 1, 0).asSInt
+
+// SpinalHDL: the point is in the type, and moving it has to be said out loud.
+accRe(index) := (accRe(index) + productRe).truncated
+io.outRe(index) := accRe(index).truncated</code></pre>
+
+<p>That is the real difference between them for a design like this, and it is a difference in what the
+compiler will refuse rather than in what the silicon costs. <code>Fixed.scala</code> is three integer
+functions and the discipline is left to each kernel; <span class="mono">SFix(1 exp, -22 exp)</span>
+carries Q2.22 in the type, derives the 59-bit accumulator from the arithmetic rather than from an
+asserted formula, and will not let an assignment silently shift the point. The Q1.23 bug in section
+10 &mdash; a coefficient of exactly 1 wrapping to &minus;1, which cost a sign flip on the permute
+path, a format change across three kernels and a regression spec &mdash; is precisely that class of
+error.</p>
+
+<div class="verdict">
+  <span class="label cool">The evaluation</span>
+  <p><strong>Stay on Chisel</strong>, for the premise rather than the tooling: CUTE is Chisel, and
+  0.63% of cells is not a reason to give up the comparison or the modules. The honest reckoning is
+  that the decision costs almost nothing in area and does cost a class of bug that a typed
+  fixed-point format would make impossible.</p>
+  <p>So the thing worth taking from SpinalHDL is not SpinalHDL. It is <strong>a Q-format type with
+  the point in it</strong>, which is a few hundred lines on top of <code>SInt</code> and would pay
+  for itself the next time a kernel truncates in the wrong place.</p>
+</div>
+
+<h3>Also evaluated, recorded here</h3>
+
+<p>The simulator was the other implementation question, decided earlier and for narrower reasons.
+<span class="mono">chiseltest</span> stopped at Chisel 6.0.0 and its Verilator backend will not
+compile its own harness against Verilator 5. ChiselSim desynchronises on Chisel 6.7.0 with
+&ldquo;Unexpected message: Ready&rdquo; on the first clock edge, and works on 7.0.0-RC1 &mdash; which
+is why this repository is on Chisel 7 rather than the 6.7.0 CUTE pins. Where a <em>generated netlist</em>
+has to be checked rather than an elaborated design, Verilator is driven directly from a SystemVerilog
+testbench, which is also what let one testbench drive both HDLs at once.</p>
+
 <footer>
   <p>Part of <span class="mono">bifrost</span>, alongside
   <a href="https://github.com/oluies/scotty">scotty</a> (the simulator and golden model) and

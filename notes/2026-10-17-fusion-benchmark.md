@@ -1546,3 +1546,65 @@ error. It cost a sign flip on the permute path, an exact-model check to catch it
 across three kernels and a regression spec to keep it fixed. Here it would have been a compile error.
 That is not an argument for switching HDL this late, but it is the honest reckoning of what the
 hand-rolled format cost.
+
+### What the two toolchains actually are
+
+Worth writing down, because the usual contrast — "SpinalHDL uses Scala directly, Chisel requires a
+rewrite" — is half wrong, and the half that is right is not about the source language.
+
+Both are Scala. Neither is a separate language with its own parser; in both, elaboration *is* a Scala
+program. Both ship a scalac compiler plugin to recover signal names from `val` declarations:
+`chisel-plugin` (published per full Scala version) and `spinalhdl-idsl-plugin` (per binary version).
+And neither is published for Scala 3 — Maven Central carries `chisel_2.12` and `chisel_2.13`, and
+`spinalhdl-core_2.11`, `_2.12`, `_2.13`. So this repository's `rtl` module is pinned to 2.13 while
+`vectors` and `model` run Scala 3.9, and that holds whichever HDL it uses. The Scala-version split in
+build.mill is not a Chisel tax.
+
+The difference is the back half:
+
+```
+                      Chisel 7.0.0-RC1        SpinalHDL 1.15.0
+source                Scala 2.13              Scala 2.13
+scalac plugin         required                required
+Scala 3               not published           not published
+intermediate form     FIRRTL                  none, its own netlist
+Verilog backend       firtool, LLVM/MLIR      Scala, in-process
+external binary       27 MB, version-matched  none
+emits                 SystemVerilog           Verilog and VHDL
+```
+
+firtool is fetched and version-matched by Chisel itself; this machine holds
+`llvm-firtool/1.114.1` and `1.62.1` in a cache, built on LLVM 21. SpinalHDL has nothing to fetch.
+
+That stage has already cost this project something nameable. `Generate.scala` passes
+`--lowering-options=disallowLocalVariables,disallowPackedArrays` for exactly one reason: CIRCT emits
+`automatic logic` inside `always` blocks and Yosys rejects it with "Invalid nesting of always
+blocks". Nothing in the Chisel source asks for that — it is a property of a code generator two
+stages downstream, and it had to be diagnosed by reading the generated Verilog. The SpinalHDL output
+needed no flag. Against that, FIRRTL is a stable IR other tools consume, firtool is a real optimising
+compiler, and CUTE is Chisel.
+
+How little the source differs is itself a finding. The per-cell body of the two kernels is identical
+character for character — the loop, the index, the comment, and both complex products:
+
+```scala
+val productRe = io.aRe(row) * io.bRe(col) - io.aIm(row) * io.bIm(col)
+val productIm = io.aRe(row) * io.bIm(col) + io.aIm(row) * io.bRe(col)
+```
+
+Only the assignments diverge, and only where the binary point is involved:
+
+```scala
+// Chisel: the point is tracked by hand.
+accRe(index) := accRe(index) + productRe
+io.outRe(index) := (accRe(index) >> fractionBits)(dataWidth - 1, 0).asSInt
+
+// SpinalHDL: the point is in the type, and moving it has to be said out loud.
+accRe(index) := (accRe(index) + productRe).truncated
+io.outRe(index) := accRe(index).truncated
+```
+
+So the choice is not between two languages. It is between tracking the format by hand and having a
+type that refuses to let it drift — a difference in what the compiler rejects rather than in what the
+silicon costs. Stay on Chisel for the premise; the thing worth taking from SpinalHDL is not
+SpinalHDL but a Q-format type with the point in it, which is a few hundred lines on top of `SInt`.
