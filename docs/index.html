@@ -777,9 +777,9 @@ are not an option at all, the question does not arise.</p>
 5.7 × 10<sup>-6</sup> worst trace error, 1.9 × 10<sup>-6</sup> worst Hermitian asymmetry, over the
 same cases. A storage change that altered the arithmetic would be a bug, and this one did not.</p>
 
-<p>The accumulator stays in registers, deliberately. It is written a block at a time and read only
-at the end, so it costs no read muxing — unlike the operands, which every lane reads every cycle.
-That is where the 16% that remains mostly sits.</p>
+<p>At this point the accumulator was still in registers, deliberately: it is written a block at a
+time and read only at the end, so it costs no read muxing, unlike the operands that every lane reads
+every cycle. That is where most of the remaining 16% sat, and it is the last section below.</p>
 
 <h3>Rectangular channels: erasure</h3>
 
@@ -824,19 +824,21 @@ one.</p>
     <th>case</th><th>shape</th><th>tile</th><th>blocks per operator</th><th>cycles per operator</th>
   </tr></thead>
   <tbody>
-    <tr><td>erasure, 1 qubit</td><td>2 → 3, padded to 2 → 4</td><td>2</td><td>6</td><td>30</td></tr>
-    <tr><td>square, 2 qubits</td><td>4 → 4</td><td>4</td><td>2</td><td>18</td></tr>
-    <tr><td>erasure, 2 qubits</td><td>4 → 6</td><td>2</td><td>15</td><td>105</td></tr>
-    <tr><td>square, 3 qubits</td><td>8 → 8</td><td>4</td><td>8</td><td>104</td></tr>
-    <tr class="hi"><td>erasure, 3 qubits</td><td>8 → 12</td><td>4</td><td>15</td><td>195</td></tr>
+    <tr><td>erasure, 1 qubit</td><td>2 → 3, padded to 2 → 4</td><td>2</td><td>2 + 4</td><td>34</td></tr>
+    <tr><td>square, 2 qubits</td><td>4 → 4</td><td>4</td><td>1 + 1</td><td>19</td></tr>
+    <tr><td>erasure, 2 qubits</td><td>4 → 6</td><td>2</td><td>6 + 9</td><td>114</td></tr>
+    <tr><td>square, 3 qubits</td><td>8 → 8</td><td>4</td><td>4 + 4</td><td>108</td></tr>
+    <tr class="hi"><td>erasure, 3 qubits</td><td>8 → 12</td><td>4</td><td>6 + 9</td><td>204</td></tr>
   </tbody>
 </table>
 </div>
 
 <p>Blocks are <span class="mono">(outputDim/tile)·(inputDim/tile)</span> for the first product plus
-<span class="mono">(outputDim/tile)²</span> for the second, each costing
-<span class="mono">inputDim + 1 + tile</span> cycles. The spec now <em>asserts</em> that count rather
-than reporting it, which is a deliberate change of habit: pinning the schedule is what localised the
+<span class="mono">(outputDim/tile)²</span> for the second, costing
+<span class="mono">inputDim + 1 + tile</span> and <span class="mono">inputDim + 2 + tile</span>
+cycles respectively &mdash; the second product writes into the accumulator, which is
+read-modify-write, so it runs a cycle longer. The spec <em>asserts</em> that count rather than
+reporting it, which is a deliberate change of habit: pinning the schedule is what localised the
 clear-too-early bug of the previous section to the datapath, since the sequencing was provably
 right.</p>
 
@@ -845,18 +847,70 @@ right.</p>
   <caption>What a rectangular channel costs in silicon, at dimension eight.</caption>
   <thead><tr><th>engine</th><th>shape</th><th>cells</th><th>over the array</th></tr></thead>
   <tbody>
-    <tr><td>ChannelEngine</td><td>8 → 8, 4 operators</td><td>384 436</td><td>+62 089 (16%)</td></tr>
-    <tr class="hi"><td>ErasureEngine</td><td>8 → 12, 3 operators</td><td><strong>412 491</strong></td><td><strong>+90 144 (22%)</strong></td></tr>
+    <tr><td>ChannelEngine</td><td>8 → 8, 4 operators</td><td>378 385</td><td>+56 038 (15%)</td></tr>
+    <tr class="hi"><td>ErasureEngine</td><td>8 → 12, 3 operators</td><td><strong>395 924</strong></td><td><strong>+73 577 (19%)</strong></td></tr>
   </tbody>
 </table>
 </div>
 
-<p><strong>Plus 7.3% for an output half again as wide</strong>, and the array inside is the same
-322 347 cells in both. The extra is +6 919 flip-flops and +21 136 gates: a 144-cell accumulator
-instead of 64, and 1.17× the operand storage. Control is flat, which is the measurement that
-confirms the paragraph above rather than merely restating it. The square engine itself moved
-384 449 → 384 436, because the load port is now an explicit row, column and copy rather than one
-packed address split by bit position — a row index into a 12-row operator is not a bit field.</p>
+<p><strong>Plus 4.6% for an output half again as wide</strong>, and the array inside is the same
+322 347 cells in both. The extra is a 144-cell accumulator instead of 64 and 1.17&times; the operand
+storage; control is flat, which is the measurement that confirms the paragraph above rather than
+merely restating it. The square engine's own figure moved 384 449 &rarr; 384 436 when the load port
+became an explicit row, column and copy rather than one packed address split by bit position &mdash;
+a row index into a 12-row operator is not a bit field &mdash; and then to 378 385 when the
+accumulator moved into memory, which is the next section.</p>
+
+<h3>The last register file: the accumulator</h3>
+
+<p>Everything else had moved to banked memory; the accumulator had not, and deliberately, because it
+is written a block at a time and read only at the end and so costs no read muxing. It was still the
+largest thing left outside memory: at 8 &rarr; 12, 144 cells of 27 bits with four read-modify-write
+ports over them. It is a <code>SkewedStore</code> now too, with three consequences.</p>
+
+<p>The write runs a cycle behind the read, so the second product's write phase is
+<span class="mono">tile + 1</span> cycles rather than <span class="mono">tile</span>. The result can
+no longer be presented as one wide port &mdash; at 8 &rarr; 12 that was 6 912 bits of output &mdash;
+so it comes out a row slice at a time through the same <span class="mono">readRow</span> the datapath
+uses. And the accumulator is the first store here that reads and writes in the same cycle, at
+different addresses, which asks for a memory with separate ports rather than one shared; this
+synthesis has no SRAM library and cannot price that difference, which is stated rather than
+hidden.</p>
+
+<p>It also stopped needing to be cleared. <strong>The first Kraus operator writes its result and
+every later one adds to it</strong>, which removes an
+<span class="mono">outputDim · (outputDim/tile)</span>-cycle zeroing pass &mdash; 16 cycles at
+8 &rarr; 8, 36 at 8 &rarr; 12 &mdash; and the first operator's read along with it. The accumulator is
+never initialised, which is a nicer property than initialising it quickly.</p>
+
+<div class="tablewrap">
+<table>
+  <caption>The accumulator in registers and in banked memory, both engines.</caption>
+  <thead><tr>
+    <th>engine</th><th>accumulator</th><th>cells</th><th>over the array</th>
+    <th>flip-flops</th><th>cycles/op</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>ChannelEngine 8 &rarr; 8</td><td>registers</td><td>384 436</td><td>+62 089 (16%)</td><td>23 079</td><td>104</td></tr>
+    <tr class="hi"><td>ChannelEngine 8 &rarr; 8</td><td><strong>banked</strong></td><td><strong>378 385</strong></td><td><strong>+56 038 (15%)</strong></td><td>23 105</td><td>108</td></tr>
+    <tr><td>ErasureEngine 8 &rarr; 12</td><td>registers</td><td>412 491</td><td>+90 144 (22%)</td><td>29 998</td><td>195</td></tr>
+    <tr class="hi"><td>ErasureEngine 8 &rarr; 12</td><td><strong>banked</strong></td><td><strong>395 924</strong></td><td><strong>+73 577 (19%)</strong></td><td>30 032</td><td>204</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Ten percent off the non-datapath cost square, eighteen percent rectangular, for four
+percent more cycles.</strong> And the flip-flop counts are flat to within thirty-four &mdash; which
+is the whole point, and the same result as <span class="mono">SkewedStoreTop</span> against
+<span class="mono">RegisterStoreTop</span> arriving for a third time. With no SRAM library both forms
+store the same bits in flops, so every cell saved here is addressing logic rather than storage. A
+flow with real memory macros would widen it; that is not measured and is not claimed.</p>
+
+<p>The gap between the square and the rectangular engine narrowed with it, from +28 055 cells to
++17 539: most of what a wider output cost was its register file, not its arithmetic. The emitted
+SystemVerilog says the same thing more bluntly &mdash;
+<span class="mono">ErasureEngine.sv</span> went from 271.8 KiB to 60.7 KiB, and the two engines now
+emit almost exactly the same volume of Verilog.</p>
 
 <h3>A measurement that had to be fixed first</h3>
 
@@ -884,10 +938,11 @@ the corner of the result is the erasure probability — 0.35, whatever the state
 that, and that everything outside the true output comes back exactly zero.</p>
 
 <div class="verdict">
-  <span class="label cool">The gap is closed</span>
-  <p>Four channels, twenty-four cases, two dimensions, square and rectangular, tiled, on banked
-  memory. Worst deviation from Scotty 1.1 × 10<sup>-6</sup> — and <strong>adding the rectangular
-  cases did not move it</strong>.</p>
+  <span class="label cool">Nothing is in a register file any more</span>
+  <p>Four channels, twenty-four cases, two dimensions, square and rectangular, tiled, with
+  <strong>every store in banked memory</strong> &mdash; state, operators, intermediate and
+  accumulator. Worst deviation from Scotty 1.1 × 10<sup>-6</sup>, and neither the rectangular cases
+  nor the accumulator's move changed it by a single bit.</p>
 </div>
 
 <div class="tablewrap">

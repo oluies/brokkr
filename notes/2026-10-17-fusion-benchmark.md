@@ -1390,3 +1390,79 @@ flop count was already right at 12322, so the whole of the difference is in the 
 ratios are unchanged — 5.2x less addressing logic, 3.6x fewer cells — and nothing here concludes
 differently. But the number was wrong, and a measurement tool that can read the wrong file is worth
 more attention than the 0.3% it moved.
+
+
+## Addendum 25: the last register file
+
+Everything with a dimension in it had moved to banked memory except the accumulator, and that was
+deliberate: it is written a block at a time and read only at the end, so it costs no read muxing,
+unlike operands that every lane reads every cycle. It was still the largest thing left outside
+memory. At 8 -> 12 it was 144 cells of 27 bits with four read-modify-write ports over them, and it
+was where most of the remaining non-datapath cost sat.
+
+It is a `SkewedStore` now too. Three consequences, all of them foreseeable and all of them real:
+
+**The write runs a cycle behind the read.** Accumulating is read-modify-write, so the second
+product's write phase pipelines over `tile + 1` cycles rather than `tile`: issue the slice at block
+row r, add into the slice read last cycle at row r-1. Cycles per operator go from
+`(outTiles*inTiles + outTiles^2) * (inputDim + 1 + tile)` to
+`outTiles*inTiles*(inputDim + 1 + tile) + outTiles^2*(inputDim + 2 + tile)`.
+
+```
+case                shape                tile   blocks/op   cycles/op   was
+erasure, 1 qubit    2 -> 3, padded to 4     2       2 + 4          34    30
+square,  2 qubits   4 -> 4                  4       1 + 1          19    18
+erasure, 2 qubits   4 -> 6                  2       6 + 9         114   105
+square,  3 qubits   8 -> 8                  4       4 + 4         108   104
+erasure, 3 qubits   8 -> 12                 4       6 + 9         204   195
+```
+
+**The result cannot be one wide port.** At 8 -> 12 the output was 6912 bits of combinational port.
+It now comes out a row slice at a time, through the same `readRow` the datapath uses, while the
+engine sits in `done`. Two users share one read port with mutually exclusive enables: the pipeline
+while the second product runs, the host afterwards.
+
+**It is the first store here that reads and writes in the same cycle.** Different addresses, so a
+1R1W memory serves it, but that is not the same macro as a 1RW and this synthesis — which has no
+SRAM library at all — cannot price the difference. Stated rather than hidden.
+
+### It no longer needs clearing
+
+The first Kraus operator writes its result and every later one adds to it. That removes an
+`outputDim * (outputDim/tile)`-cycle zeroing pass — 16 cycles at 8 -> 8, 36 at 8 -> 12 — and the
+first operator's read along with it. The accumulator is never initialised, which is a better property
+than initialising it quickly, and it is the reason the cycle count above grows by only `outTiles^2`
+rather than by a clear phase as well.
+
+It also gave a free check. The padded cells of the one-qubit erasure case have to come back exactly
+zero, and with no zeroing pass they are zero only because operator 0 writes zeros there and the later
+ones add zeros. That assertion already existed; it now tests something stronger than it did.
+
+### What it bought
+
+```
+engine               accumulator   cells     over the array   flops    cycles/op
+ChannelEngine 8->8    registers    384436    +62089 (16%)     23079          104
+ChannelEngine 8->8    banked       378385    +56038 (15%)     23105          108
+ErasureEngine 8->12   registers    412491    +90144 (22%)     29998          195
+ErasureEngine 8->12   banked       395924    +73577 (19%)     30032          204
+```
+
+**10% off the non-datapath cost square, 18% rectangular, for 4% more cycles.**
+
+The flop counts are flat to within 34. That is the whole point rather than a disappointment, and it
+is the same result as `SkewedStoreTop` against `RegisterStoreTop` arriving for a third time: with no
+SRAM library both forms store the same bits in flip-flops, so every cell saved is addressing logic
+and not storage. A flow with real memory macros would widen it. Not measured, not claimed.
+
+Two things worth noting beyond the headline. The gap between the square and the rectangular engine
+narrowed from +28055 cells to +17539 — most of what a wider output cost was its register file, not
+its arithmetic, which is the same lesson as the 24% at dimension eight. And the emitted Verilog says
+it more bluntly than the cell count does: `ErasureEngine.sv` went from 271.8 KiB to 60.7 KiB, and
+the two engines now emit almost exactly the same volume.
+
+Results unchanged, again: 1.133e-06 worst deviation, 5.722e-06 trace error, 1.907e-06 Hermitian
+asymmetry over the same 24 cases. Three storage changes in a row have now left the arithmetic
+bit-identical, which is what makes the fourth one worth trusting.
+
+Nothing in this engine is in a register file any more.

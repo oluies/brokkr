@@ -38,18 +38,27 @@ import chisel3.util._
   * work on the second product.
   *
   * ==Storage==
-  * The operands live in [[SkewedStore]] rather than registers. Holding them in registers made the
-  * address muxing 24% of the engine at dimension eight and would be preposterous at ten qubits,
-  * where `rho` alone is 16 MiB. Two consequences shape the control:
+  * Everything with a dimension in it lives in [[SkewedStore]]: `rho`, the Kraus set, the
+  * intermediate `T`, and the accumulator. Nothing is held in a register file. Register files made
+  * the address muxing 24% of the engine at dimension eight and would be preposterous at ten qubits,
+  * where `rho` alone is 16 MiB. Three consequences shape the control:
   *
   *   - reads are synchronous, so an address is issued a cycle before the lane consumes it, and each
   *     accumulation pass runs `inputDim + 1` cycles rather than `inputDim`;
   *   - a `tile × tile` block cannot be written in one cycle, since `tile` single-ported banks
   *     cannot absorb `tile²` writes. It goes out over `tile` cycles, one block row at a time, each
-  *     touching every bank exactly once.
+  *     touching every bank exactly once;
+  *   - the accumulator is read-modify-write, so its write runs a cycle behind its read and the
+  *     second product's write phase is `tile + 1` cycles. It is the only store here that reads and
+  *     writes in the same cycle, which asks for a memory with separate ports rather than one
+  *     shared; the generic synthesis below cannot price that difference and does not claim to.
   *
-  * The accumulator stays in registers. It is written a block at a time and read only at the end, so
-  * it costs no read muxing — unlike the operands, which are read by every lane every cycle.
+  * The accumulator never has to be cleared. The first Kraus operator '''writes''' its result and
+  * every later one adds to it, which removes an `outputDim · (outputDim/tile)`-cycle zeroing pass
+  * and the first operator's read along with it.
+  *
+  * Because the result is in memory it cannot be presented as one wide port. It comes out a row
+  * slice at a time, through the same `readRow` the datapath uses, while the engine sits in `done`.
   *
   * @param inputDim   the state is `inputDim × inputDim`
   * @param outputDim  the result is `outputDim × outputDim`, and each operator `outputDim × inputDim`
@@ -76,16 +85,17 @@ class ChannelEngine(
 
   val inTiles: Int = inputDim / tile
   val outTiles: Int = outputDim / tile
+
+  /** Headroom for summing `krausCount` results without rounding between them. */
   val accWidth: Int = dataWidth + log2Ceil(krausCount) + 1
 
   private val inBits = log2Ceil(inputDim)
   private val outBits = log2Ceil(outputDim)
-  private val cellBits = log2Ceil(cells)
   private val tileBits = log2Ceil(tile)
   private val gridBits = log2Ceil(math.max(inTiles, outTiles) + 1)
   private val stepBits = log2Ceil(inputDim + 2)
   private val krausBits = log2Ceil(krausCount + 1)
-  private val rowBits = log2Ceil(tile + 1)
+  private val rowBits = log2Ceil(tile + 2)
 
   object State extends ChiselEnum {
     val idle, firstPass, firstWrite, secondPass, secondWrite, done = Value
@@ -105,16 +115,17 @@ class ChannelEngine(
     val busy = Output(Bool())
     val done = Output(Bool())
 
-    val outRe = Output(Vec(cells, SInt(dataWidth.W)))
-    val outIm = Output(Vec(cells, SInt(dataWidth.W)))
+    /** Result read port, live in `done`: a row slice in, `tile` cells out a cycle later. */
+    val resultRow = Input(UInt(outBits.W))
+    val resultTileCol = Input(UInt(gridBits.W))
+    val resultRe = Output(Vec(tile, SInt(dataWidth.W)))
+    val resultIm = Output(Vec(tile, SInt(dataWidth.W)))
   })
 
   val rho = new SkewedStore(inputDim, inputDim, tile, dataWidth, copies = 1)
   val kraus = new SkewedStore(outputDim, inputDim, tile, dataWidth, copies = krausCount)
   val temp = new SkewedStore(outputDim, inputDim, tile, dataWidth, copies = 1)
-
-  val accRe = Reg(Vec(cells, SInt(accWidth.W)))
-  val accIm = Reg(Vec(cells, SInt(accWidth.W)))
+  val acc = new SkewedStore(outputDim, outputDim, tile, accWidth, copies = 1)
 
   val gemm = Module(new ComplexGemm(tile, dataWidth, maxDepth = inputDim))
   val state = RegInit(State.idle)
@@ -153,11 +164,18 @@ class ChannelEngine(
   rho.readRow(0.U, stepIndex, tileCol, issuing && first)
   temp.readColumn(0.U, tileRow, stepIndex, issuing && !first)
 
-  // Only on the last cycle of a write. The write now spans `tile` cycles and reads the
-  // accumulators throughout, so clearing on the first would zero the rows still to be written.
-  private val writing = state === State.firstWrite || state === State.secondWrite
+  private val firstWriting = state === State.firstWrite
+  private val secondWriting = state === State.secondWrite
 
-  gemm.io.clear := (writing && blockRow === (tile - 1).U) || io.start
+  // The second write is a read-modify-write pipeline over the block's rows: issue the slice at
+  // `blockRow`, add into the slice read last cycle at `blockRow - 1`. So it runs one cycle longer
+  // than the block has rows, and the gemm cannot be cleared until that last cycle.
+  private val accumulating = operator =/= 0.U
+  private val issuingAcc = secondWriting && blockRow < tile.U && accumulating
+  private val writingAcc = secondWriting && blockRow > 0.U
+
+  gemm.io.clear := (firstWriting && blockRow === (tile - 1).U) ||
+    (secondWriting && blockRow === tile.U) || io.start
   gemm.io.inValid := reading && step > 0.U
 
   (0 until tile).foreach { lane =>
@@ -169,15 +187,32 @@ class ChannelEngine(
     gemm.io.bIm(lane) := Mux(first, rho.dataIm(lane), -kraus.dataIm(lane))
   }
 
-  // The counter carries an extra bit for its terminal value; the index field is narrower.
-  private val rowIndex = blockRow(tileBits - 1, 0)
+  /** The row of the block being written: `blockRow` in the first write, one behind in the second. */
+  private val rowIndex = Mux(secondWriting, blockRow - 1.U, blockRow)(tileBits - 1, 0)
   private val writingRow = (((tileRow << tileBits).asUInt + rowIndex)(outBits - 1, 0))
+  private val readingRow =
+    (((tileRow << tileBits).asUInt + blockRow(tileBits - 1, 0))(outBits - 1, 0))
+
   private val blockValuesRe =
     (0 until tile).map(j => gemm.io.outRe(((rowIndex << tileBits).asUInt + j.U)(2 * tileBits - 1, 0)))
   private val blockValuesIm =
     (0 until tile).map(j => gemm.io.outIm(((rowIndex << tileBits).asUInt + j.U)(2 * tileBits - 1, 0)))
 
-  temp.writeSlice(0.U, writingRow, tileCol, blockValuesRe, blockValuesIm, state === State.firstWrite)
+  temp.writeSlice(0.U, writingRow, tileCol, blockValuesRe, blockValuesIm, firstWriting)
+
+  // The first operator writes its result; every later one adds to what is there. That is what lets
+  // the accumulator start uninitialised, with no zeroing pass and no read on the first operator.
+  private val heldRe = (0 until tile).map(lane => Mux(accumulating, acc.dataRe(lane), 0.S))
+  private val heldIm = (0 until tile).map(lane => Mux(accumulating, acc.dataIm(lane), 0.S))
+  private val sumRe =
+    (0 until tile).map(lane => (heldRe(lane) +& blockValuesRe(lane))(accWidth - 1, 0).asSInt)
+  private val sumIm =
+    (0 until tile).map(lane => (heldIm(lane) +& blockValuesIm(lane))(accWidth - 1, 0).asSInt)
+
+  // One read port, two users: the pipeline while the second product runs, the host once it is done.
+  acc.readRow(0.U, readingRow, tileCol, issuingAcc)
+  acc.readRow(0.U, io.resultRow, io.resultTileCol, state === State.done)
+  acc.writeSlice(0.U, writingRow, tileCol, sumRe, sumIm, writingAcc)
 
   /** Walk the output blocks in row-major order; true on the last one.
     *
@@ -202,10 +237,6 @@ class ChannelEngine(
         tileRow := 0.U
         tileCol := 0.U
         blockRow := 0.U
-        (0 until cells).foreach { i =>
-          accRe(i) := 0.S
-          accIm(i) := 0.S
-        }
         state := State.firstPass
       }
     }
@@ -238,16 +269,8 @@ class ChannelEngine(
     }
 
     is(State.secondWrite) {
-      (0 until tile).foreach { j =>
-        val target =
-          (writingRow * outputDim.U + (tileCol << tileBits).asUInt + j.U)(cellBits - 1, 0)
-
-        accRe(target) := accRe(target) + blockValuesRe(j)
-        accIm(target) := accIm(target) + blockValuesIm(j)
-      }
-
       blockRow := blockRow + 1.U
-      when(blockRow === (tile - 1).U) {
+      when(blockRow === tile.U) {
         blockRow := 0.U
         when(advanceTile(outTiles)) {
           operator := operator + 1.U
@@ -263,9 +286,9 @@ class ChannelEngine(
     }
   }
 
-  (0 until cells).foreach { i =>
-    io.outRe(i) := accRe(i)(dataWidth - 1, 0).asSInt
-    io.outIm(i) := accIm(i)(dataWidth - 1, 0).asSInt
+  (0 until tile).foreach { lane =>
+    io.resultRe(lane) := acc.dataRe(lane)(dataWidth - 1, 0).asSInt
+    io.resultIm(lane) := acc.dataIm(lane)(dataWidth - 1, 0).asSInt
   }
 
   io.busy := state =/= State.idle && state =/= State.done

@@ -50,15 +50,20 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
     /** Every block of both products, each an `inputDim`-deep accumulation plus its write.
       *
       * `T = K · rho` is `outputDim × inputDim` and `R = T · K†` is `outputDim × outputDim`, so the
-      * two products differ only in their block-column count. A pass is `inputDim + 1` cycles
-      * because the synchronous read runs a cycle ahead, and a write is `tile` cycles because
-      * `tile` single-ported banks cannot absorb `tile²` values at once.
+      * two products differ in their block-column count. A pass is `inputDim + 1` cycles because the
+      * synchronous read runs a cycle ahead, and a write is `tile` cycles because `tile`
+      * single-ported banks cannot absorb `tile²` values at once.
+      *
+      * The second product's write is one cycle longer again. It goes into the accumulator, which is
+      * read-modify-write now that it lives in memory, so the write of a block row runs a cycle
+      * behind the read of it.
       */
     def cyclesPerOperator: Int = {
       val inTiles = inputDim / tile
       val outTiles = outputDim / tile
 
-      (outTiles * inTiles + outTiles * outTiles) * (inputDim + 1 + tile)
+      outTiles * inTiles * (inputDim + 1 + tile) +
+        outTiles * outTiles * (inputDim + 1 + tile + 1)
     }
   }
 
@@ -151,8 +156,20 @@ class ChannelEngineSpec extends AnyFlatSpec with ChiselSim {
       assert(dut.io.done.peek().litToBoolean, s"case ${c.index} did not finish in $cycles cycles")
 
       taken = cycles
-      out = (0 until c.outputDim * c.outputDim).map { cell =>
-        (real(dut.io.outRe(cell).peek().litValue), real(dut.io.outIm(cell).peek().litValue))
+
+      // The result is in memory, so it comes out a row slice at a time through the same read port
+      // the datapath uses, one cycle after the address. A wide combinational output port would
+      // defeat the point of having moved it off registers.
+      out = (0 until c.outputDim).flatMap { row =>
+        (0 until c.outputDim / c.tile).flatMap { tileCol =>
+          dut.io.resultRow.poke(row.U)
+          dut.io.resultTileCol.poke(tileCol.U)
+          dut.clock.step()
+
+          (0 until c.tile).map { lane =>
+            (real(dut.io.resultRe(lane).peek().litValue), real(dut.io.resultIm(lane).peek().litValue))
+          }
+        }
       }
     }
 

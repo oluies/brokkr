@@ -482,16 +482,17 @@ zero row of `K` contributes nothing to either product.
 
 | case | shape | tile | blocks per operator | cycles per operator |
 |---|---|---|---|---|
-| erasure, 1 qubit | 2→3, padded to 2→4 | 2 | 6 | 30 |
-| square, 2 qubits | 4→4 | 4 | 2 | 18 |
-| erasure, 2 qubits | 4→6 | 2 | 15 | 105 |
-| square, 3 qubits | 8→8 | 4 | 8 | 104 |
-| erasure, 3 qubits | 8→12 | 4 | 15 | 195 |
+| erasure, 1 qubit | 2→3, padded to 2→4 | 2 | 2 + 4 | 34 |
+| square, 2 qubits | 4→4 | 4 | 1 + 1 | 19 |
+| erasure, 2 qubits | 4→6 | 2 | 6 + 9 | 114 |
+| square, 3 qubits | 8→8 | 4 | 4 + 4 | 108 |
+| erasure, 3 qubits | 8→12 | 4 | 6 + 9 | 204 |
 
 Blocks are `(outputDim/tile)·(inputDim/tile)` for the first product plus `(outputDim/tile)²` for the
-second, each costing `inputDim + 1 + tile` cycles. The spec now **asserts** that count rather than
-reporting it: pinning the schedule is what localised the clear-too-early bug to the datapath, since
-the sequencing was provably right.
+second, costing `inputDim + 1 + tile` and `inputDim + 2 + tile` cycles respectively — the second
+product's write goes into the accumulator, which is read-modify-write, so it runs a cycle longer.
+The spec **asserts** that count rather than reporting it: pinning the schedule is what localised the
+clear-too-early bug to the datapath, since the sequencing was provably right.
 
 The storage scheme needed no change at all. `bank = (row + col) mod tile` with offset
 `row · (cols/tile) + col/tile` is still a bijection when rows ≠ cols — the offset fixes the row and
@@ -499,14 +500,50 @@ the column's tile, and the bank then fixes the column within it.
 
 | engine | shape | cells | over the array |
 |---|---|---|---|
-| `ChannelEngine` | 8→8, 4 operators | 384 436 | +62 089 (16%) |
-| `ErasureEngine` | 8→12, 3 operators | 412 491 | +90 144 (22%) |
+| `ChannelEngine` | 8→8, 4 operators | 378 385 | +56 038 (15%) |
+| `ErasureEngine` | 8→12, 3 operators | 395 924 | +73 577 (19%) |
 
-**+7.3% for a 1.5× wider output**, and the array inside is the same 322 347 cells in both. The extra
-is +6 919 flip-flops and +21 136 gates — a 144-cell accumulator instead of 64, and 1.17× the operand
-storage. Control is flat. (The square engine moved 384 449 → 384 436 because the load port is now an
-explicit row, column and copy rather than one packed address split by bit position: a row index into
-a 12-row operator is not a bit field.)
+**+4.6% for a 1.5× wider output**, and the array inside is the same 322 347 cells in both. The extra
+is a 144-cell accumulator instead of 64 and 1.17× the operand storage; control is flat. (The square
+engine's own figure moved 384 449 → 384 436 when the load port became an explicit row, column and
+copy rather than one packed address split by bit position — a row index into a 12-row operator is not
+a bit field — and then to 378 385 when the accumulator moved into memory, below.)
+
+**The last register file: the accumulator.** Everything else had moved to banked memory; the
+accumulator had not, because it is read a block at a time and written a block at a time and so costs
+no read muxing. It was still the single largest thing left outside memory, and at 8→12 it was 144
+cells of 27 bits with four read-modify-write ports over them.
+
+It is now a `SkewedStore` too, with three consequences. The write runs a cycle behind the read, so
+the second product's write phase is `tile + 1` cycles. The result can no longer be one wide port — at
+8→12 that was 6 912 bits of output — so it comes out a row slice at a time through the same
+`readRow` the datapath uses. And the accumulator is the first store here that reads and writes in the
+same cycle, at different addresses, which asks for a memory with separate ports rather than one
+shared; this synthesis has no SRAM library and cannot price that difference, which is stated rather
+than hidden.
+
+It also no longer needs clearing at all. **The first Kraus operator writes its result and every
+later one adds to it**, which removes an `outputDim · (outputDim/tile)`-cycle zeroing pass — 16 cycles
+at 8→8, 36 at 8→12 — and the first operator's read along with it. The accumulator is never
+initialised.
+
+| engine | accumulator | cells | over the array | flip-flops | cycles/op |
+|---|---|---|---|---|---|
+| `ChannelEngine` 8→8 | registers | 384 436 | +62 089 (16%) | 23 079 | 104 |
+| `ChannelEngine` 8→8 | **banked** | **378 385** | **+56 038 (15%)** | 23 105 | 108 |
+| `ErasureEngine` 8→12 | registers | 412 491 | +90 144 (22%) | 29 998 | 195 |
+| `ErasureEngine` 8→12 | **banked** | **395 924** | **+73 577 (19%)** | 30 032 | 204 |
+
+**10% off the non-datapath cost square, 18% rectangular, for 4% more cycles.** And the flop counts
+are flat to within 34 — which is the whole point, and the same result as `SkewedStoreTop` against
+`RegisterStoreTop` arriving a third time: with no SRAM library both forms store the same bits in
+flip-flops, so every cell saved is addressing logic rather than storage. A flow with real memory
+macros would widen it; that is not measured here.
+
+The gap between the square and rectangular engines narrowed with it, from +28 055 cells to +17 539:
+most of what a wider output cost was its register file. The emitted SystemVerilog says the same
+thing more bluntly — `ErasureEngine.sv` went from 271.8 KiB to 60.7 KiB, and the two engines now emit
+almost exactly the same volume of Verilog.
 
 **A measurement that had to be fixed first.** Two configurations of the same generator exposed a
 hazard in how area is measured here. `area.sh` already read every file a generation emitted, because
@@ -525,11 +562,12 @@ corner of the result is the erasure probability — 0.35, whatever the state was
 along with the padding coming back exactly zero.
 
 So: **verified at dimensions 4 and 8 over four channels and twenty-four cases, square and
-rectangular, tiled, on banked memory** — worst deviation 1.1e-06, and adding the rectangular cases
-did not move it.
+rectangular, tiled, with every store in banked memory** — state, operators, intermediate and
+accumulator, nothing in a register file. Worst deviation 1.1e-06, and neither the rectangular cases
+nor the accumulator's move changed it by a bit.
 
 At dimension 4 the whole engine costs 342 351 cells against `ComplexGemm`'s 322 347, so **storage,
-sequencing and accumulation are 6%** on top of the multiplier array at that size — the 16% and 22%
+sequencing and accumulation are 6%** on top of the multiplier array at that size — the 15% and 19%
 above are the same overhead at dimension 8, square and rectangular.
 
 `ComplexGemm` is the datapath under it: a tile×tile array of complex accumulators fed one column of
