@@ -37,7 +37,11 @@ object Generate {
       }),
     // The same capacity two ways, to weigh skewed SRAM against the register files it replaces.
     "SkewedStoreTop" -> (() => new SkewedStoreTop(8, 4, 24, copies = 4)),
-    "RegisterStoreTop" -> (() => new RegisterStoreTop(8, 4, 24, copies = 4))
+    "RegisterStoreTop" -> (() => new RegisterStoreTop(8, 4, 24, copies = 4)),
+    // pctc's repetition-code decoder, at the distances its side note tabulates.
+    "MajorityVote3" -> (() => new MajorityVote(3) { override def desiredName = "MajorityVote3" }),
+    "MajorityVote5" -> (() => new MajorityVote(5) { override def desiredName = "MajorityVote5" }),
+    "MajorityVote7" -> (() => new MajorityVote(7) { override def desiredName = "MajorityVote7" })
   )
 
   /** `Generate [module ...]`, or no arguments for all of them. Writes into `build/`. */
