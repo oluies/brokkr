@@ -714,6 +714,21 @@ sbt 'Test/runMain scotty.simulator.fusion.FusionBench 22'    # brickwork, 22 qub
 sbt 'Test/runMain scotty.simulator.fusion.FusionBench grover 10 4'
 ```
 
+## A side module: the repetition-code decoder
+
+`MajorityVote` is not part of the engine. It is the hardware half of pctc's
+[repetition-code side note](https://oluies.github.io/pctc/#repetition-heading), on why cat qubits
+need no bit-flip protection: the phase-flip code stores a logical value in `n` qubits, measures each
+in the `|+>`, `|->` basis and takes the majority. `MajorityVoteSpec` checks it on every input for
+`n` up to 9 against the two facts pctc proves in Lean, `majority_corrects` (any `n / 2` flips are
+corrected) and `majority_fails` (more are not). Through `scripts/area.sh` it maps to 5, 12 and 21
+generic cells at `n = 3, 5, 7`, one of them the output flip-flop.
+
+```bash
+./mill rtl.test.testOnly brokkr.MajorityVoteSpec
+./mill rtl.runMain brokkr.Generate MajorityVote7 && scripts/area.sh MajorityVote7
+```
+
 ## Related
 
 - [scotty](https://github.com/oluies/scotty/tree/pctc) — the simulator, and the golden model any
