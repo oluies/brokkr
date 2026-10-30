@@ -18,6 +18,8 @@ All three datapaths exist as RTL. The engine does not. What is here:
   measurements point at),
   plus the state-vector path — `AddressGen`, `DiagonalKernel`, `MonomialKernel` (with a Benes
   network) and `DenseKernel` — each verified against Scotty under Verilator;
+- two side modules outside the engine, `MajorityVote` and `RecursiveMajority`: the repetition-code
+  decoders from pctc's cat-qubit side note, [below](#side-modules-the-repetition-code-decoders);
 - `vectors/` — the Scala 3 generator that produces golden vectors from Scotty.
 
 The gate-fusion pass that motivated all of it lives in
@@ -27,7 +29,7 @@ because it is a simulator optimisation in its own right.
 ## Building the RTL
 
 ```bash
-./mill rtl.test                                      # both blocks, against Scotty's vectors
+./mill rtl.test                                      # datapaths against Scotty's vectors, decoders exhaustively
 ./mill rtl.runMain brokkr.Generate                   # emit SystemVerilog via CIRCT
 scripts/area.sh DenseKernel                          # synthesise with Yosys, report cells
 scripts/verilate.sh DenseKernel                      # simulate the netlist under Verilator
@@ -714,38 +716,53 @@ sbt 'Test/runMain scotty.simulator.fusion.FusionBench 22'    # brickwork, 22 qub
 sbt 'Test/runMain scotty.simulator.fusion.FusionBench grover 10 4'
 ```
 
-## A side module: the repetition-code decoder
+## Side modules: the repetition-code decoders
 
-`MajorityVote` is not part of the engine. It is the hardware half of pctc's
+Neither is part of the engine. They are the hardware half of pctc's
 [repetition-code side note](https://oluies.github.io/pctc/#repetition-heading), on why cat qubits
 need no bit-flip protection: the phase-flip code stores a logical value in `n` qubits, measures each
-in the `|+>`, `|->` basis and takes the majority. `MajorityVoteSpec` checks it on every input for
-`n` up to 9 against the two facts pctc proves in Lean, `majority_corrects` (any `n / 2` flips are
-corrected) and `majority_fails` (more are not). Through `scripts/area.sh` it maps to 5, 12 and 21
-generic cells at `n = 3, 5, 7`, one of them the output flip-flop.
+in the `|+>`, `|->` basis and decodes by majority.
 
-`RecursiveMajority` is the cheaper decoder: the majority of three majorities of three, a tree of
-`ab | bc | ca`. At nine copies it maps to 17 cells against exact majority's 38, and pays for it in
-correction: two flips in each of two groups defeat it, so it corrects three flips where exact
-majority corrects four. pctc proves both limits (`recursiveMajority_corrects`,
-`recursiveMajority_fails`, `majority_nine_corrects`); `RecursiveMajoritySpec` checks them on all 512
-inputs and pins the failures to exactly 27 of the 126 patterns of four flips. At a flip probability
-of `5e-4` that makes it fail about 430 times as often, 1.7e-12 against 3.9e-15.
+- `MajorityVote(n)` is the exact decoder: a population count and a comparison with `n / 2`.
+- `RecursiveMajority(levels)` is the cheaper one: the majority of majorities of three, a tree of
+  `ab | bc | ca`, over `3^levels` copies.
+
+Their golden model is a theorem rather than Scotty. pctc proves in Lean what each corrects, and the
+specs check it on every input: `MajorityVoteSpec` for `n` up to 9 (`majority_corrects`,
+`majority_fails`), `RecursiveMajoritySpec` on all 512 inputs at nine copies
+(`recursiveMajority_corrects`, `recursiveMajority_fails`), pinning its failures to exactly the 27 of
+the 126 four-flip patterns with two flips in each of two groups.
+
+| module | copies | cells | corrects | fails at `p = 5e-4` |
+|---|---|---|---|---|
+| `MajorityVote3` | 3 | 5 | 1 flip | 7.5e-7 |
+| `MajorityVote5` | 5 | 12 | 2 flips | 1.25e-9 |
+| `MajorityVote7` | 7 | 21 | 3 flips | 2.2e-12 |
+| `MajorityVote9` | 9 | 38 | 4 flips | 3.9e-15 |
+| `RecursiveMajority9` | 9 | 17 | 3 flips | 1.7e-12 |
+
+Generic cells from `scripts/area.sh`, one of them the output flip-flop; failure rates from the
+closed forms with each qubit flipped independently, the binomial tail for exact majority and
+`3q^2 - 2q^3`, `q = 3p^2 - 2p^3`, for recursive. At nine copies the recursive decoder saves 55% of
+the cells and fails about 430 times as often. Against exact majority on seven, which also corrects
+three flips, it is a little better on both counts, 17 cells against 21 and 1.7e-12 against 2.2e-12,
+but it needs two more qubits to get there. Next to the
+datapaths' roughly 20 000 cells per complex multiply-accumulate, every one of them is negligible.
 
 ```bash
-./mill rtl.test.testOnly brokkr.MajorityVoteSpec
-./mill rtl.test.testOnly brokkr.RecursiveMajoritySpec
-./mill rtl.runMain brokkr.Generate MajorityVote9 RecursiveMajority9
+./mill rtl.test.testOnly brokkr.MajorityVoteSpec brokkr.RecursiveMajoritySpec
+./mill rtl.runMain brokkr.Generate MajorityVote3 MajorityVote5 MajorityVote7 MajorityVote9 RecursiveMajority9
 scripts/area.sh MajorityVote9 && scripts/area.sh RecursiveMajority9
 ```
 
 ## Related
 
-- [scotty](https://github.com/oluies/scotty/tree/pctc) — the simulator, and the golden model any
-  hardware here would be verified against.
+- [scotty](https://github.com/oluies/scotty/tree/pctc) — the simulator, and the golden model the
+  datapaths are verified against.
 - [pctc](https://github.com/oluies/pctc) — noisy post-selected closed timelike curves; the workload
   that raised the question. It [runs in the browser](https://oluies.github.io/pctc/), compiled to
   JavaScript with Scala.js, and its `erasure` channel is why the engine here carries two dimensions.
+  Its Lean proofs are the golden model for the decoders.
 - [OpenXiangShan/CUTE](https://github.com/OpenXiangShan/CUTE) — the thing this is modelled on.
 
 ---
