@@ -348,12 +348,12 @@ network, for different reasons. The address *stride* is a bit permutation of the
 with the bank mapping that makes gathers conflict-free it becomes affine, not a bit permutation.
 Routing the operator's own permutation is harder still: usually arbitrary.
 
-Regenerating the golden vectors needs Scotty published locally — **both** to Ivy and to M2, since
-Mill resolves a `SNAPSHOT` from `~/.ivy2/local` first and a stale copy there will silently shadow a
-fresh one in `~/.m2`:
+Regenerating the golden vectors needs Scotty 0.7.0 published locally from its release tag — **both**
+to Ivy and to M2, since Mill resolves from `~/.ivy2/local` first and a stale copy there will silently
+shadow a fresh one in `~/.m2`:
 
 ```bash
-cd ../scotty && sbt publishLocal publishM2
+cd ../scotty && git checkout v0.7.0 && sbt publishLocal publishM2
 cd ../brokkr && ./mill vectors.runMain brokkr.vectors.AddressVectors rtl/src/test/resources/address-vectors.txt
 ```
 
