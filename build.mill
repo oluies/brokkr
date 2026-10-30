@@ -21,7 +21,7 @@ object vectors extends ScalaModule {
 
   def scalacOptions = Seq("-deprecation", "-feature", "-unchecked", "-release:21")
 
-  def mvnDeps = Seq(mvn"io.github.oluies::scotty:0.7.0")
+  def mvnDeps = Seq(mvn"io.github.oluies::scotty:0.7.1")
 
   def sources = Task.Sources(moduleDir / "src" / "main" / "scala")
 }
@@ -76,7 +76,7 @@ object model extends ScalaModule {
 
   // The refill model's input is a fused circuit, so it reads one from Scotty directly rather than
   // through a file. The banking models above need no such thing and do not use it.
-  def mvnDeps = Seq(mvn"io.github.oluies::scotty:0.7.0")
+  def mvnDeps = Seq(mvn"io.github.oluies::scotty:0.7.1")
 
   // For BenesRouter, whose cost is one of the things being measured here.
   def moduleDeps = Seq(vectors)
