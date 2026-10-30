@@ -719,8 +719,8 @@ sbt 'Test/runMain scotty.simulator.fusion.FusionBench grover 10 4'
 ## Side modules: the repetition-code decoders
 
 Neither is part of the engine. They are the hardware half of pctc's
-[repetition-code side note](https://oluies.github.io/pctc/#repetition-heading), on why cat qubits
-need no bit-flip protection: the phase-flip code stores a logical value in `n` qubits, measures each
+[repetition-code side note](https://oluies.github.io/pctc/#repetition-heading), on why cat-qubit
+designs leave out bit-flip protection: the phase-flip code stores a logical value in `n` qubits, measures each
 in the `|+>`, `|->` basis and decodes by majority.
 
 - `MajorityVote(n)` is the exact decoder: a population count and a comparison with `n / 2`.
