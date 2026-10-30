@@ -41,7 +41,10 @@ object Generate {
     // pctc's repetition-code decoder, at the distances its side note tabulates.
     "MajorityVote3" -> (() => new MajorityVote(3) { override def desiredName = "MajorityVote3" }),
     "MajorityVote5" -> (() => new MajorityVote(5) { override def desiredName = "MajorityVote5" }),
-    "MajorityVote7" -> (() => new MajorityVote(7) { override def desiredName = "MajorityVote7" })
+    "MajorityVote7" -> (() => new MajorityVote(7) { override def desiredName = "MajorityVote7" }),
+    // Exact and recursive majority at the same nine copies, to weigh what the cheaper one saves.
+    "MajorityVote9" -> (() => new MajorityVote(9) { override def desiredName = "MajorityVote9" }),
+    "RecursiveMajority9" -> (() => new RecursiveMajority(levels = 2) { override def desiredName = "RecursiveMajority9" })
   )
 
   /** `Generate [module ...]`, or no arguments for all of them. Writes into `build/`. */

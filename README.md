@@ -724,9 +724,19 @@ in the `|+>`, `|->` basis and takes the majority. `MajorityVoteSpec` checks it o
 corrected) and `majority_fails` (more are not). Through `scripts/area.sh` it maps to 5, 12 and 21
 generic cells at `n = 3, 5, 7`, one of them the output flip-flop.
 
+`RecursiveMajority` is the cheaper decoder: the majority of three majorities of three, a tree of
+`ab | bc | ca`. At nine copies it maps to 17 cells against exact majority's 38, and pays for it in
+correction: two flips in each of two groups defeat it, so it corrects three flips where exact
+majority corrects four. pctc proves both limits (`recursiveMajority_corrects`,
+`recursiveMajority_fails`, `majority_nine_corrects`); `RecursiveMajoritySpec` checks them on all 512
+inputs and pins the failures to exactly 27 of the 126 patterns of four flips. At a flip probability
+of `5e-4` that makes it fail about 430 times as often, 1.7e-12 against 3.9e-15.
+
 ```bash
 ./mill rtl.test.testOnly brokkr.MajorityVoteSpec
-./mill rtl.runMain brokkr.Generate MajorityVote7 && scripts/area.sh MajorityVote7
+./mill rtl.test.testOnly brokkr.RecursiveMajoritySpec
+./mill rtl.runMain brokkr.Generate MajorityVote9 RecursiveMajority9
+scripts/area.sh MajorityVote9 && scripts/area.sh RecursiveMajority9
 ```
 
 ## Related
